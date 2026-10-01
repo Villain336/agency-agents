@@ -35,6 +35,8 @@ working for days. Weave is designed for many agents working for minutes.
 Each repo shard is one **Durable Object** (single-threaded, strongly consistent, SQLite storage;
 large files offload to R2). Repos can be **sharded by path prefix** so unrelated areas land in parallel.
 
+**Web UI** at `/` (served as static assets by the Worker): code browser with blame and search, history and commit pages with provenance, the change/review page with inline comments and suggestions, tasks (list and board), releases, notifications, repositories and settings. The earlier live swarm dashboard is at `/legacy`. `npm run ui:mock` runs the UI against a mock server; `npm run ui:shots` captures screenshots.
+
 ## Quick start
 
 ```sh
