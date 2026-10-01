@@ -241,6 +241,15 @@ async function handleApi(req: Request, env: Env): Promise<Response> {
   const sharded = names.length > 1;
   const one = (shard: string, b: unknown = body, p = path) => call(env, repo, shard, req.method, p, search, actor!, b);
 
+  // Configuration is applied to every shard it defines, and the routing cache is dropped, so the
+  // first call that turns an unsharded repo into a sharded one takes effect immediately.
+  if (parts[0] === "config" && req.method === "POST") {
+    const next: Record<string, string[]> = body.shards ?? shards;
+    let last: Response = json({});
+    for (const n of ["main", ...Object.keys(next).filter((k) => k !== "main")]) last = await one(n, { ...body, shard: n, shards: next });
+    shardCache.delete(repo);
+    return last;
+  }
   if (!sharded) return one("main");
 
   // ---- sharded repositories ----
@@ -265,12 +274,6 @@ async function handleApi(req: Request, env: Env): Promise<Response> {
     return json({ job: null });
   }
   if (a === "runner" && id === "jobs") return one(shardOfId(parts[2]), body, path.replace(parts[2], strip(parts[2])));
-  if (a === "config" && req.method === "POST") {
-    let last: Response = json({});
-    for (const n of names) last = await one(n, { ...body, shard: n, shards: n === "main" ? (body.shards ?? shards) : (body.shards ?? shards) });
-    shardCache.delete(repo);
-    return last;
-  }
   if (a === "reset" && req.method === "POST") {
     for (const n of names) await one(n, { ...body, empty: true });
     return json({ ok: true, note: "sharded repositories reset empty; use /api/import to load files" });
