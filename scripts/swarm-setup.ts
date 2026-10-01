@@ -44,6 +44,6 @@ test('last returns the final element', () => {
     "README.md": "# lib\n\nA tiny utility library.\n\n## Functions\n\n- `sum(xs)`\n- `last(xs)`\n",
   },
 });
-await admin.configure({ checks: [{ name: "unit", command: "node --test", timeoutMs: 60000 }], reviewPaths: ["README.md"], policy: { evidence: "train" } });
+await admin.configure({ checks: [{ name: "unit", command: "node --test", timeoutMs: 60000 }], reviewPaths: ["README.md"], policy: { evidence: "train" }, merge: { lists: true, union: process.env.WEAVE_NO_UNION ? [] : ["*.js"] } });
 writeFileSync(out, JSON.stringify({ url, repo, developers: dev, tokens }, null, 2));
 console.log(`seeded ${dev.length} developers, 2 reviewers, 4 runners in repo "${repo}"; tokens in ${out}`);

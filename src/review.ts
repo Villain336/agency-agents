@@ -29,6 +29,8 @@ export interface RiskReport {
 }
 
 export interface RiskInput {
+  /** overlapping edits resolved automatically (list items, appended blocks) */
+  autoResolved?: number;
   /** substantial work landed by other agents that this change would remove (author confirmed it) */
   reverts?: { rev: number; agent: string; path: string; lines: number }[];
   paths: string[];
@@ -80,6 +82,7 @@ export function scoreRisk(i: RiskInput): RiskReport {
   if (testsRemoved) add(30, `removes ${testsRemoved} test case(s)`);
   const touchesCode = i.paths.some((p) => !TESTISH.test(p) && /\.(ts|tsx|js|jsx|py|go|rs|java|rb|c|cc|cpp)$/.test(p));
   if (touchesCode && !i.paths.some((p) => TESTISH.test(p))) add(10, "code changed without tests");
+  if (i.autoResolved) add(5 * Math.min(i.autoResolved, 4), `auto-merged ${i.autoResolved} overlapping edit(s) (list items / appended blocks)`);
   for (const v of i.reverts ?? []) add(40, `removes ${v.lines} lines of work landed by ${v.agent} in r${v.rev}`);
   if (i.recentRejects) add(10, "author has recently rejected changes");
   score = Math.min(100, score);

@@ -10,9 +10,18 @@ export type Segment =
   | { kind: "ok"; lines: string[] }
   | { kind: "conflict"; base: string[]; ours: string[]; theirs: string[] };
 
+export interface MergeOptions {
+  /** merge single-line lists (exports, imports, arrays, arguments) item by item */
+  lists?: boolean;
+  /** keep both sides when each only inserted text at the same point (appended tests, changelog entries) */
+  union?: boolean;
+}
+
 export interface MergeResult {
   segments: Segment[];
   conflicts: number;
+  /** clashes resolved automatically by the strategies above */
+  auto: number;
   /** Merged text; only meaningful when conflicts === 0. */
   text: string;
 }
@@ -142,12 +151,150 @@ function apply(base: string[], hunks: Hunk[], s: number, e: number): string[] {
 
 const same = (x: string[], y: string[]) => x.length === y.length && x.every((v, i) => v === y[i]);
 
+
+// ---- smart strategies ---------------------------------------------------------------------------
+
+const OPEN: Record<string, string> = { "{": "}", "[": "]", "(": ")" };
+
+/** Matching bracket pairs on one line, ignoring brackets inside quotes. */
+function bracketPairs(line: string): [number, number][] {
+  const pairs: [number, number][] = [];
+  const stack: [string, number][] = [];
+  let q: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === "\\") i++;
+      else if (c === q) q = null;
+    } else if (c === "'" || c === '"' || c === "`") q = c;
+    else if (c in OPEN) stack.push([c, i]);
+    else if (Object.values(OPEN).includes(c)) {
+      const top = stack.pop();
+      if (!top || OPEN[top[0]] !== c) return [];
+      pairs.push([top[1], i]);
+    }
+  }
+  return stack.length || q ? [] : pairs;
+}
+
+/** Split a list body on top-level commas (not inside quotes or nested brackets). */
+function splitItems(inner: string): string[] {
+  const items: string[] = [];
+  let depth = 0;
+  let q: string | null = null;
+  let cur = "";
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (q) {
+      cur += c;
+      if (c === "\\") cur += inner[++i] ?? "";
+      else if (c === q) q = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") q = c;
+    else if (c in OPEN) depth++;
+    else if (Object.values(OPEN).includes(c)) depth--;
+    if (c === "," && depth === 0) (items.push(cur.trim()), (cur = ""));
+    else cur += c;
+  }
+  if (cur.trim() !== "") items.push(cur.trim());
+  return items;
+}
+
+/**
+ * Three-way merge of one line that is (or contains) a list, at item granularity. Two sides adding
+ * different items, or one adding and one removing, do not really conflict.
+ */
+function mergeListLine(b: string, o: string, t: string): string | null {
+  const m = Math.min(b.length, o.length, t.length);
+  let p = 0;
+  while (p < m && b[p] === o[p] && o[p] === t[p]) p++;
+  let s = 0;
+  while (s < m - p && b[b.length - 1 - s] === o[o.length - 1 - s] && o[o.length - 1 - s] === t[t.length - 1 - s]) s++;
+  const from = p;
+  const to = b.length - s;
+  // innermost bracket pair that encloses the whole differing region in every version
+  const enclosing = bracketPairs(b).filter(([open, close]) => open < from && close >= to).sort((x, y) => y[0] - x[0])[0];
+  if (!enclosing) return null;
+  const [open, close] = enclosing;
+  const fromEnd = b.length - close;
+  const inner = (l: string) => l.slice(open + 1, l.length - fromEnd);
+  const head = b.slice(0, open + 1);
+  const tail = b.slice(close);
+  if (o.slice(0, open + 1) !== head || t.slice(0, open + 1) !== head || o.slice(o.length - fromEnd) !== tail || t.slice(t.length - fromEnd) !== tail) return null;
+  const bi = splitItems(inner(b));
+  const oi = splitItems(inner(o));
+  const ti = splitItems(inner(t));
+  const oa = oi.filter((x) => !bi.includes(x));
+  const or = bi.filter((x) => !oi.includes(x));
+  const ta = ti.filter((x) => !bi.includes(x));
+  const tr = bi.filter((x) => !ti.includes(x));
+  const items = bi.filter((x) => !or.includes(x) && !tr.includes(x));
+  for (const x of [...oa, ...ta]) if (!items.includes(x)) items.push(x);
+  const body = inner(b);
+  const lead = /^\s*/.exec(body)![0];
+  const trail = /\s*$/.exec(body)![0];
+  const sep = /,(\s*)\S/.exec(body)?.[0].slice(0, -1) ?? ", ";
+  return head + lead + items.join(sep) + trail + tail;
+}
+
+/** How much of `base` this line shares at its start and end (0..base.length). */
+function similarity(base: string, l: string): number {
+  const m = Math.min(base.length, l.length);
+  let p = 0;
+  while (p < m && base[p] === l[p]) p++;
+  let s = 0;
+  while (s < m - p && base[base.length - 1 - s] === l[l.length - 1 - s]) s++;
+  return p + s;
+}
+
+/** The line in `block` that is a modified version of `base` (e.g. the exports line), or -1. */
+function anchorIndex(base: string, block: string[]): number {
+  let best = -1;
+  let score = 0;
+  block.forEach((l, i) => {
+    const sc = similarity(base, l);
+    if (sc > score) ((score = sc), (best = i));
+  });
+  return score >= Math.max(4, base.length * 0.7) ? best : -1;
+}
+
+/** Combine the lines two sides inserted at the same point: one side's, or both when `union` allows. */
+function unionBlock(a: string[], b: string[], opts: MergeOptions): string[] | null {
+  if (!a.length) return b;
+  if (!b.length) return a;
+  if (a.length === b.length && a.every((x, i) => x === b[i])) return a;
+  return opts.union ? [...a, ...b] : null;
+}
+
+/**
+ * Resolve one clash region. Strategies (each opt-in, each counted by the caller):
+ *  - union: both sides only inserted lines at the same point (appended tests, changelog entries)
+ *  - lists: the region is one base line that both sides changed, possibly with new lines inserted around it
+ *    (a new function above the exports line, plus an edit to the exports line itself): the anchor line is
+ *    merged item by item and the inserted blocks around it are kept
+ */
+function resolveClash(baseLines: string[], ours: string[], theirs: string[], opts: MergeOptions): string[] | null {
+  if (opts.union && baseLines.length === 0 && ours.length && theirs.length) return [...ours, ...theirs];
+  if (!opts.lists || baseLines.length !== 1) return null;
+  const b = baseLines[0];
+  const oi = anchorIndex(b, ours);
+  const ti = anchorIndex(b, theirs);
+  if (oi < 0 || ti < 0) return null;
+  const anchor = ours[oi] === b ? theirs[ti] : theirs[ti] === b || ours[oi] === theirs[ti] ? ours[oi] : mergeListLine(b, ours[oi], theirs[ti]);
+  if (anchor === null) return null;
+  const before = unionBlock(ours.slice(0, oi), theirs.slice(0, ti), opts);
+  const after = unionBlock(ours.slice(oi + 1), theirs.slice(ti + 1), opts);
+  return before && after ? [...before, anchor, ...after] : null;
+}
+
 /** Three-way merge. `ours` = trunk side, `theirs` = the agent's session. */
-export function merge3(base: string, ours: string, theirs: string): MergeResult {
+export function merge3(base: string, ours: string, theirs: string, opts: MergeOptions = {}): MergeResult {
   const B = splitLines(base);
   const ha = diffHunks(B, splitLines(ours));
   const hb = diffHunks(B, splitLines(theirs));
   const segments: Segment[] = [];
+  let auto = 0;
   let pos = 0;
   let ia = 0;
   let ib = 0;
@@ -179,13 +326,17 @@ export function merge3(base: string, ours: string, theirs: string): MergeResult 
     if (!gb.length) pushOk(ra);
     else if (!ga.length) pushOk(rb);
     else if (same(ra, rb)) pushOk(ra);
-    else segments.push({ kind: "conflict", base: B.slice(s, e), ours: ra, theirs: rb });
+    else {
+      const merged = resolveClash(B.slice(s, e), ra, rb, opts);
+      if (merged) (pushOk(merged), auto++);
+      else segments.push({ kind: "conflict", base: B.slice(s, e), ours: ra, theirs: rb });
+    }
     pos = e;
   }
   pushOk(B.slice(pos));
   const conflicts = segments.filter((s) => s.kind === "conflict").length;
   const text = joinLines(segments.flatMap((s) => (s.kind === "ok" ? s.lines : s.theirs)));
-  return { segments, conflicts, text };
+  return { segments, conflicts, text, auto };
 }
 
 export type Choice = "ours" | "theirs" | "both" | { text: string };

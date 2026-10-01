@@ -664,3 +664,85 @@ test("a resolution that declares an older base is merged with what landed since"
   r.submit("bob");
   assert.ok(r.head("lib.js")!.includes("function flatten"));
 });
+
+// ---- hot-spot merge strategies, configured per repository ------------------------
+const libWith = (fns: string[]) => fns.map((n) => `function ${n}(x) {\n  return ${n}Impl(x);\n}\n`).join("\n") + `\nmodule.exports = { ${fns.join(", ")} };\n`;
+const testsWith = (names: string[]) => names.map((n) => `test('${n}', () => {});\n`).join("");
+
+test("exports-line clashes between agents merge by default (list merge), and are visible in risk and provenance", () => {
+  const r = mk({ "lib.js": libWith(["sum", "last"]) });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  // alice adds a function at the top of the file and exports it; bruno adds one just above the exports line and exports it
+  r.write("a", "lib.js", libWith(["sum", "last"]).replace("function sum", "function average(x) {\n  return averageImpl(x);\n}\n\nfunction sum").replace("{ sum, last }", "{ sum, last, average }"));
+  r.write("b", "lib.js", libWith(["sum", "last"]).replace("\nmodule.exports", "\nfunction flatten(x) {\n  return flattenImpl(x);\n}\n\nmodule.exports").replace("{ sum, last }", "{ sum, last, flatten }"));
+  assert.equal(r.submit("a").status, "landed");
+  const res = r.submit("b");
+  assert.equal(res.status, "landed", JSON.stringify(res));
+  assert.ok(r.head("lib.js")!.includes("{ sum, last, average, flatten }"), r.head("lib.js")!);
+  assert.ok(r.head("lib.js")!.includes("function average") && r.head("lib.js")!.includes("function flatten"));
+  assert.deepEqual(r.s.commits.at(-1)!.provenance!.autoResolved?.map((x) => x.path), ["lib.js"]);
+});
+
+test("new functions inserted at the same point need the union strategy; without it the clash is reported", () => {
+  const run = (union: string[]) => {
+    const r = mk({ "lib.js": libWith(["sum"]) });
+    r.setConfig({ merge: { lists: true, union } });
+    r.open({ id: "a", agent: "alice", goal: "g" });
+    r.open({ id: "b", agent: "bruno", goal: "g" });
+    r.write("a", "lib.js", libWith(["sum", "average"]));
+    r.write("b", "lib.js", libWith(["sum", "flatten"]));
+    r.submit("a");
+    return { status: r.submit("b").status, text: r.head("lib.js")! };
+  };
+  assert.equal(run([]).status, "conflicted");
+  const ok = run(["*.js"]);
+  assert.equal(ok.status, "landed");
+  assert.ok(ok.text.includes("{ sum, average, flatten }") && ok.text.includes("function average") && ok.text.includes("function flatten"));
+});
+
+test("appended tests from many agents merge when the test file is configured as union", () => {
+  const r = mk({ "lib.test.js": testsWith(["sum"]) });
+  r.setConfig({ merge: { lists: true, union: ["*.test.js"] } });
+  for (const n of ["a", "b", "c", "d"]) {
+    r.open({ id: n, agent: n, goal: "g" });
+    r.write(n, "lib.test.js", testsWith(["sum", n]));
+  }
+  assert.equal(r.submit("a").status, "landed");
+  for (const n of ["b", "c", "d"]) assert.equal(r.submit(n).status, "landed", n);
+  const t = r.head("lib.test.js")!;
+  assert.ok(["sum", "a", "b", "c", "d"].every((n) => t.includes(`test('${n}'`)));
+  assert.equal((t.match(/^test\(/gm) ?? []).length, 5, "no test lost, none duplicated");
+});
+
+test("union is off by default: the same appended tests conflict", () => {
+  const r = mk({ "lib.test.js": testsWith(["sum"]) });
+  r.open({ id: "a", agent: "a", goal: "g" });
+  r.open({ id: "b", agent: "b", goal: "g" });
+  r.write("a", "lib.test.js", testsWith(["sum", "a"]));
+  r.write("b", "lib.test.js", testsWith(["sum", "b"]));
+  r.submit("a");
+  assert.equal(r.submit("b").status, "conflicted");
+});
+
+test("list merging can be turned off", () => {
+  const r = mk({ "lib.js": libWith(["sum"]) });
+  r.setConfig({ merge: { lists: false, union: [] } });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "lib.js", libWith(["sum", "average"]));
+  r.write("b", "lib.js", libWith(["sum", "flatten"]));
+  r.submit("a");
+  assert.equal(r.submit("b").status, "conflicted");
+});
+
+test("auto-resolved edits add to the risk score so a reviewer can see them", () => {
+  const r = mk({ "lib.js": libWith(["sum", "last"]) });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "lib.js", libWith(["sum", "last"]).replace("function sum", "function average(x) {\n  return averageImpl(x);\n}\n\nfunction sum").replace("{ sum, last }", "{ sum, last, average }"));
+  r.write("b", "lib.js", libWith(["sum", "last"]).replace("\nmodule.exports", "\nfunction flatten(x) {\n  return flattenImpl(x);\n}\n\nmodule.exports").replace("{ sum, last }", "{ sum, last, flatten }"));
+  r.submit("a");
+  const res = r.submit("b");
+  assert.ok(res.risk!.reasons.some((x) => /auto-merged .*overlapping/i.test(x)), res.risk!.reasons.join("|"));
+});

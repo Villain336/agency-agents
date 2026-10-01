@@ -26,20 +26,72 @@ const DECL = [
   /^func\s+(?:\([^)]*\)\s*)?(\w+)/,
 ];
 
+const declName = (line: string): string | null => {
+  for (const re of DECL) {
+    const m = re.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+};
+
+/** Net bracket depth change of one line, ignoring quoted text and // comments. */
+function depthDelta(line: string): number {
+  let d = 0;
+  let q: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === "\\") i++;
+      else if (c === q) q = null;
+    } else if (c === "'" || c === '"' || c === "`") q = c;
+    else if (c === "/" && line[i + 1] === "/") break;
+    else if (c === "{" || c === "(" || c === "[") d++;
+    else if (c === "}" || c === ")" || c === "]") d--;
+  }
+  return d;
+}
+
+/** Where a declaration that starts at `i` ends (exclusive). */
+function declEnd(lines: string[], i: number): number {
+  const n = lines.length;
+  if (/^(?:async\s+)?(?:def|class)\s+\w+.*:\s*$/.test(lines[i])) {
+    // indentation-based languages: the body is every following blank or indented line
+    let j = i + 1;
+    while (j < n && (lines[j].trim() === "" || /^\s/.test(lines[j]))) j++;
+    while (j > i + 1 && lines[j - 1].trim() === "") j--;
+    return j;
+  }
+  let depth = depthDelta(lines[i]);
+  let j = i + 1;
+  while (depth > 0 && j < n) depth += depthDelta(lines[j++]);
+  return j;
+}
+
+/**
+ * Top-level declarations and the statements between them. Each declaration owns only its own lines, so a
+ * trailing `module.exports = { ... }` or an `import` block is a `<top>` region, never part of the function
+ * above it (which would make every pair of edits to the exports line look like an edit to that function).
+ */
 export function symbols(lines: string[]): Sym[] {
-  const heads: { name: string; start: number }[] = [];
-  lines.forEach((l, i) => {
-    for (const re of DECL) {
-      const m = re.exec(l);
-      if (m) {
-        heads.push({ name: m[1], start: i });
-        break;
-      }
-    }
-  });
   const out: Sym[] = [];
-  if (!heads.length || heads[0].start > 0) out.push({ name: "<top>", start: 0, end: heads[0]?.start ?? lines.length });
-  heads.forEach((h, i) => out.push({ name: h.name, start: h.start, end: heads[i + 1]?.start ?? lines.length }));
+  let topStart = 0;
+  let i = 0;
+  const flushTop = (end: number) => {
+    if (end > topStart) out.push({ name: "<top>", start: topStart, end });
+  };
+  while (i < lines.length) {
+    const name = declName(lines[i]);
+    if (!name) {
+      i++;
+      continue;
+    }
+    flushTop(i);
+    const end = declEnd(lines, i);
+    out.push({ name, start: i, end });
+    i = end;
+    topStart = i;
+  }
+  flushTop(lines.length);
   return out;
 }
 
@@ -74,7 +126,7 @@ export function semanticRisk(path: string, base: string, ours: string, theirs: s
     risks.push({ path, kind: "same-symbol", symbols: both, detail: `both sides modified ${both.map((n) => `\`${n}\``).join(", ")} in different lines; the merge compiles textually but may not mean what either author intended` });
   const deps = (side: Set<string>, other: Set<string>, text: string[], label: string) => {
     for (const s of symbols(text)) {
-      if (!side.has(s.name)) continue;
+      if (s.name === "<top>" || !side.has(s.name)) continue;
       const body = text.slice(s.start, s.end).join("\n");
       const hit = [...other].filter((n) => n !== s.name && !both.includes(n) && mentions(body, n));
       if (hit.length)

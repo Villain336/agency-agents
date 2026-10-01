@@ -7,7 +7,7 @@
 
 import { canonical, hmacSha256, randomToken, sha256 } from "./crypto.ts";
 import { diffStat, fileDiff, type FileDiff } from "./diff.ts";
-import { diffHunks, merge3, resolveSegments, splitLines, type Choice, type Segment } from "./merge.ts";
+import { diffHunks, merge3, resolveSegments, splitLines, type MergeOptions, type Choice, type Segment } from "./merge.ts";
 import { DEFAULT_POLICY, scoreRisk, type Need, type Policy, type RiskReport } from "./review.ts";
 import { semanticRisk, type Risk } from "./semantic.ts";
 import { shardOf } from "./shard.ts";
@@ -74,6 +74,8 @@ export interface Config {
   policy: Partial<Policy>;
   webhooks: Webhook[];
   mirror?: { url: string };
+  /** hot-spot merge strategies: list-aware merging (default on) and union paths (globs, default none) */
+  merge: { lists: boolean; union: string[] };
 }
 
 export interface Conflict {
@@ -125,6 +127,8 @@ export interface Session {
   blockedOn?: string[];
   /** what reviewers/verifiers told the author, so the reason is never only in the audit log */
   feedback?: { type: "rejected" | "verify_failed" | "reverts"; by: string; note: string; ts: number }[];
+  /** overlapping edits resolved by the list/union strategies at the last evaluation */
+  autoResolved?: { path: string; count: number }[];
   /** trunk revision at which the current conflicts were computed; resolutions are based on it */
   conflictRev?: number;
   reviewer?: string;
@@ -143,6 +147,8 @@ export interface Provenance {
   merged: boolean;
   risk?: { score: number; tier: string; reasons: string[] };
   semantic: Risk[];
+  /** overlapping edits Weave resolved automatically (list items, appended blocks) instead of reporting a conflict */
+  autoResolved?: { path: string; count: number }[];
   evidence: { check: string; passed: boolean; jobId: string; rev: number }[];
   verifiedBy?: string;
   approvals: { by: string; kind: string }[];
@@ -251,7 +257,7 @@ export class WeaveError extends Error {
   }
 }
 
-export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [] });
+export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [], merge: { lists: true, union: [] } });
 
 export const emptyState = (): State => ({
   rev: 0, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
@@ -286,6 +292,12 @@ export interface Revert {
 }
 
 const significant = (l: string) => l.trim().length > 3;
+
+/** Minimal glob: `*` within a segment, `**` across segments; a pattern without `/` matches the file name anywhere. */
+export function globMatch(path: string, pattern: string): boolean {
+  const re = new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*") + "$");
+  return re.test(pattern.includes("/") ? path : path.slice(path.lastIndexOf("/") + 1));
+}
 
 export class Repo {
   s: State;
@@ -356,6 +368,7 @@ export class Repo {
     if (patch.shard) c.shard = patch.shard;
     if (patch.checks) c.checks = patch.checks.map((k) => ({ name: k.name, command: k.command, timeoutMs: k.timeoutMs ?? 120_000 }));
     if (patch.policy) c.policy = patch.policy;
+    if (patch.merge) c.merge = { lists: patch.merge.lists !== false, union: patch.merge.union ?? [] };
     if (patch.mirror !== undefined) c.mirror = patch.mirror;
     if (patch.webhooks)
       c.webhooks = patch.webhooks.map((w, i) => ({ id: w.id ?? `wh${i + 1}`, url: w.url, secret: w.secret ?? "", events: w.events?.length ? w.events : ["*"] }));
@@ -526,10 +539,11 @@ export class Repo {
   }
 
   // ---- landing --------------------------------------------------------
-  private mergeAll(s: Session, overlay: Record<string, string | null> = {}): { changes: Record<string, string | null>; conflicts: Conflict[]; merged: boolean; risks: Risk[] } {
+  private mergeAll(s: Session, overlay: Record<string, string | null> = {}): { changes: Record<string, string | null>; conflicts: Conflict[]; merged: boolean; risks: Risk[]; auto: { path: string; count: number }[] } {
     const changes: Record<string, string | null> = {};
     const conflicts: Conflict[] = [];
     const risks: Risk[] = [];
+    const auto: { path: string; count: number }[] = [];
     let merged = false;
     for (const [path, theirs] of Object.entries(s.edits)) {
       const baseRev = s.pathBase[path] ?? s.baseRev;
@@ -542,14 +556,15 @@ export class Repo {
         conflicts.push({ path, kind, segments: [{ kind: "conflict", base: splitLines(base ?? ""), ours: splitLines(ours ?? ""), theirs: splitLines(theirs ?? "") }] });
       if (base === null) { whole("add-add"); continue; }
       if (ours === null || theirs === null) { whole("delete-modify"); continue; }
-      const r = this.mergeMemo(base, ours, theirs);
+      const r = this.mergeMemo(base, ours, theirs, { lists: this.s.config.merge.lists, union: this.s.config.merge.union.some((g) => globMatch(path, g)) });
       if (r.conflicts) conflicts.push({ path, kind: "text", segments: r.segments });
       else {
+        if (r.auto) auto.push({ path, count: r.auto });
         changes[path] = r.text;
         risks.push(...r.risks.map((k) => ({ ...k, path })));
       }
     }
-    return { changes, conflicts, merged, risks };
+    return { changes, conflicts, merged, risks, auto };
   }
 
   /** Queue evaluation re-merges the same inputs many times; results are pure, so cache them by content hash. */
@@ -564,11 +579,11 @@ export class Repo {
     return h;
   }
   private memo = new Map<string, ReturnType<typeof merge3> & { risks: Risk[] }>();
-  private mergeMemo(base: string, ours: string, theirs: string) {
-    const key = `${this.hashOf(base)}.${this.hashOf(ours)}.${this.hashOf(theirs)}`;
+  private mergeMemo(base: string, ours: string, theirs: string, opts: MergeOptions) {
+    const key = `${this.hashOf(base)}.${this.hashOf(ours)}.${this.hashOf(theirs)}.${opts.lists ? 1 : 0}${opts.union ? 1 : 0}`;
     let hit = this.memo.get(key);
     if (!hit) {
-      const m = merge3(base, ours, theirs);
+      const m = merge3(base, ours, theirs, opts);
       hit = { ...m, risks: m.conflicts ? [] : semanticRisk("", base, ours, theirs) };
       this.memo.set(key, hit);
       if (this.memo.size > 400) this.memo.delete(this.memo.keys().next().value!);
@@ -635,7 +650,7 @@ export class Repo {
   private riskOf(s: Session, r: ReturnType<Repo["mergeAll"]>, reverts: Revert[] = []): RiskReport {
     const mine = Object.values(this.s.sessions).filter((x) => x.agent === s.agent && x.id !== s.id).slice(-5);
     return scoreRisk({
-      reverts,
+      reverts, autoResolved: r.auto.reduce((n, a) => n + a.count, 0),
       paths: Object.keys(r.changes), before: (p) => this.head(p), after: r.changes, semantic: r.risks, merged: r.merged,
       protectedPaths: this.s.config.reviewPaths, recentRejects: mine.filter((x) => x.status === "rejected").length, policy: this.policy(),
     });
@@ -676,6 +691,7 @@ export class Repo {
       return { status: "active", reverts };
     }
     const risk = (s.risk = this.riskOf(s, r, reverts));
+    s.autoResolved = r.auto;
 
     // 1. required checks, run by pull-based runners
     let checked = false;
@@ -735,7 +751,7 @@ export class Repo {
     const ident = this.identityOf(s.actorId);
     s.landedRev = this.commit(s.id, s.agent, msg, changes, merged, {
       goal: s.goal, actor: { id: s.actorId ?? "open", name: s.agent, kind: ident?.kind ?? "agent", model: s.model }, promptHash: s.promptHash,
-      baseRev: s.baseRev, risk: { score: risk.score, tier: risk.tier, reasons: risk.reasons }, semantic: s.risks,
+      baseRev: s.baseRev, risk: { score: risk.score, tier: risk.tier, reasons: risk.reasons }, semantic: s.risks, autoResolved: s.autoResolved?.length ? s.autoResolved : undefined,
       evidence: s.evidence.filter((e) => e.passed).map((e) => ({ check: e.check, passed: e.passed, jobId: e.jobId, rev: e.rev })),
       verifiedBy: s.verified?.by, approvals: s.approvals.map((a) => ({ by: a.by, kind: a.kind })),
     });
