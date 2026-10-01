@@ -1,77 +1,159 @@
 # Weave
 
-**Many agents, one trunk, zero branches.** A Cloudflare-native collaboration layer built for the
-"Build the Next GitHub" challenge: a way for multiple AI agents to change one codebase concurrently.
+**Many agents, one trunk, zero branches.** A Cloudflare-native collaboration platform where AI agents
+change one codebase concurrently, built for the "Build the Next GitHub" challenge.
 
-## Why Git's model breaks for agents
-
-Branches, PRs and merge conflicts were designed for a few humans working for days. Agents work in
-parallel, in minutes, in dozens. Branch-per-agent means a pile of stale branches, a serial PR queue,
-and conflicts discovered late by whoever lands last.
+Git's model (branches, PRs, a serial merge queue, textual conflicts) was designed for a few humans
+working for days. Weave is designed for many agents working for minutes.
 
 ## The model
 
-| Git concept | Weave replacement |
+| Git/GitHub | Weave |
 |---|---|
-| Branch / worktree | **Session**: a cheap overlay pinned to a trunk revision. Nothing to create, push, or clean up. |
-| Surprise conflicts at merge time | **Intent declarations**: agents say which paths they plan to touch. Overlaps raise live warnings *before* any code is written. |
-| Pull request + serial queue | **Atomic landing**: `submit` 3-way merges against trunk *as it is now*. Independent work lands instantly; concurrent edits to the same file auto-merge. |
-| Conflict markers in files | **Structured conflicts**: returned as data (base / ours / theirs segments). The agent resolves with `ours`, `theirs`, `both`, or custom text, then re-submits. Other agents keep landing meanwhile. |
-| "It merged cleanly but broke" | **Semantic gate**: if both sides changed the same function, or one changed a function that uses something the other changed, the clean merge is held as `needs_verify` until a verifier (test runner, reviewer agent) attests against the exact merged result. |
-| CODEOWNERS + human review | **Protected paths** route to a reviewer agent. Approval re-merges against current trunk, so a stale diff never lands. |
+| Branch / worktree | **Session**: a cheap overlay pinned to a trunk revision. Nothing to create, push or clean up. |
+| Surprise conflicts at merge time | **Intent declarations**: agents say what they'll touch; overlaps warn *before* code is written. |
+| PR + serial merge queue | **Atomic landing**: a 3-way merge against trunk *as it is now*. Independent work lands instantly; concurrent edits to one file auto-merge. |
+| Conflict markers | **Structured conflicts**: base/ours/theirs as data; the agent resolves and resubmits while others keep landing. |
+| "It merged cleanly but broke" | **Semantic gate**: if two changes touch the same function, or one changes something the other's function uses, landing waits for evidence on the *merged* result. |
+| Required status checks | **Pull-based runners**: checks run against the exact merged result (optionally speculatively, queued behind earlier changes: `evidence: "train"`). Failures go back to the agent with the output. |
+| CODEOWNERS + review everything | **Risk-tiered review**: low-risk changes land on evidence; medium needs a reviewer (agent or human); high needs a human. A review queue ranks by risk and respects a human attention budget. |
+| Comments | Line comments, blocking threads, **suggested changes** the author applies with one call. |
+| Who wrote this? | **Signed provenance** on every commit (identity, model, prompt *hash*, risk, evidence, approvals) in a hash chain; the audit log is hash-chained too. |
+| Accounts, PATs | **Scoped identities**: kind (agent, human, reviewer, verifier, runner, admin), path scopes, hourly budgets; separation of duties (no self-review, no self-verify). |
+| Clone / push | **Real Git remote**: `git clone`/`fetch`/`push` over smart HTTP (protocol v2 and v0). A push to `main` lands through Weave's merge; session refs are `refs/weave/sessions/*`. Optional mirror to GitHub. |
+| Webhooks, API, SDKs | Signed webhooks with retries, REST API, **MCP server**, TypeScript and Python SDKs, long-poll event stream. |
 
-Each repo is one **Durable Object**: a single-threaded, strongly consistent trunk with durable
-storage, which is exactly the serialization point atomic landing needs. The Worker is the API and
-dashboard, with no other infrastructure.
+Each repo shard is one **Durable Object** (single-threaded, strongly consistent, SQLite storage;
+large files offload to R2). Repos can be **sharded by path prefix** so unrelated areas land in parallel.
 
-## Run it
+## Quick start
 
 ```sh
 npm install --legacy-peer-deps
-npm test                 # merge engine + repo semantics
-npm run dev              # http://localhost:8787 - click "Run multi-agent demo"
-node scripts/demo.ts     # same scenario from the terminal (needs `npm run dev` running)
-npm run deploy           # deploy to your Cloudflare account
+npm test                  # 76 unit + integration tests (includes real `git` against the git bridge)
+npm run dev               # http://localhost:8787, open dev mode (no auth); click "Run multi-agent demo"
+npm run e2e               # boots the Worker with auth + R2, drives every feature end to end (needs python3, git)
 ```
 
-Requires Node 22.18+ (scripts run TypeScript natively).
+### Production setup
+
+```sh
+npx wrangler secret put WEAVE_ADMIN_TOKEN     # enables auth; without it Weave runs in open dev mode
+npx wrangler r2 bucket create weave-blobs     # optional, then add an r2_buckets binding named BLOBS
+npx wrangler secret put MIRROR_TOKEN          # optional: token for pushing to a GitHub mirror
+npm run deploy
+```
+
+Create identities (agents get their own token; tokens are shown once):
+
+```sh
+curl -X POST $URL/api/identities -H "Authorization: Bearer $ADMIN" \
+  -d '{"name":"fixer-bot","kind":"agent","paths":["src/"],"model":"claude-…","budget":{"sessionsPerHour":60}}'
+```
+
+Configure policy, checks and protected paths:
+
+```sh
+curl -X POST $URL/api/config -H "Authorization: Bearer $ADMIN" -d '{
+  "checks":[{"name":"unit","command":"npm test","timeoutMs":120000}],
+  "reviewPaths":["src/auth","infra/"],
+  "policy":{"autoLandBelow":30,"humanAbove":70,"attentionBudget":5,"evidence":"paths"},
+  "webhooks":[{"url":"https://example.com/hook","secret":"…","events":["landed","conflict"]}],
+  "mirror":{"url":"https://github.com/you/repo.git"}
+}'
+```
+
+Run a check runner (inside a sandbox: it executes agent-written code; see Security):
+
+```sh
+node scripts/runner.ts --url $URL --token $RUNNER_TOKEN --name runner-1
+```
+
+## Using Weave
+
+**From an MCP-capable agent** (Claude Code, Cursor, …):
+`claude mcp add --transport http weave $URL/mcp --header "Authorization: Bearer $TOKEN"`.
+Tools: `weave_status`, `weave_open_session`, `weave_read_file`, `weave_write_file`, `weave_preview`,
+`weave_submit`, `weave_resolve_conflict`, `weave_review_pack`, `weave_review`, `weave_verify`,
+`weave_comment`, `weave_history`, `weave_provenance`, and more.
+
+**From code:**
+
+```ts
+import { Weave } from "./sdk/ts/weave.ts";
+const weave = new Weave({ url, token });
+const s = await weave.open({ goal: "fix the bug", intent: ["src/a.ts"] });
+await weave.write(s.id, "src/a.ts", fixed);
+const r = await weave.submit(s.id);  // landed | verifying | conflicted | needs_verify | in_review | active
+```
+
+(Python: `sdk/python/weave.py`, standard library only.)
+
+**From Git:** `git clone http://alice:$TOKEN@host/git/<repo>`; `git push origin HEAD:main` lands through
+Weave. Divergent pushes need `--force` client-side (Weave merges them server-side). A push that needs
+checks or review is *not* rejected: it stays open as `refs/weave/sessions/<id>` and lands when ready.
+
+### What `submit` returns
+
+| status | meaning | agent should |
+|---|---|---|
+| `landed` | on trunk | done |
+| `verifying` | required checks are running | wait; it lands automatically |
+| `conflicted` | real overlapping edits | `resolve` each path, submit again |
+| `needs_verify` | merged cleanly but interacts with concurrent work | a different identity verifies |
+| `in_review` | risk tier needs approval | a reviewer/human approves |
+| `active` | checks failed (see `evidence`) | fix, resubmit |
 
 ## API
 
-All routes accept `?repo=<name>` (default `default`).
+All routes accept `?repo=<name>` (default `default`) and `Authorization: Bearer <token>`.
 
 | Route | Purpose |
 |---|---|
-| `POST /api/sessions` `{id?, agent, goal, intent?}` | Open a session; returns overlap `warnings` |
-| `GET /api/sessions/:id/file?path=` | Read a file as the session sees it |
-| `POST /api/sessions/:id/file` `{path, content\|null}` | Write/delete a file in the overlay |
-| `POST /api/sessions/:id/intent` `{paths}` | Declare intent, get overlap warnings |
-| `POST /api/sessions/:id/submit` `{message?}` | Land: `landed`, `needs_verify` (+ risks), `in_review`, or `conflicted` (+ conflicts) |
-| `POST /api/sessions/:id/resolve` `{path, how \| choices}` | Resolve a conflicted path |
-| `GET /api/sessions/:id/preview` | Dry-run merge: files, conflicts, semantic risks |
-| `POST /api/sessions/:id/verify` `{verifier, passed, note?}` | Attest (or reject) a `needs_verify` merge; lands on success |
-| `POST /api/import` `{files, message?}` | Import a snapshot (`node scripts/import.ts` from a git checkout) |
-| `POST /api/sessions/:id/review` `{reviewer, approve}` | Review a protected-path change |
-| `GET /api/state` | Trunk, commits, sessions, event log |
-| `GET /api/export` | Trunk history as a `git fast-import` stream (`curl .../api/export \| git fast-import`) |
+| `GET /api/status` · `/api/trunk/files` · `/api/trunk/file?path=` · `/api/commits` | Read trunk |
+| `POST /api/sessions` · `GET/POST /api/sessions/:id/{file,intent,preview,submit,resolve,rerun,abandon}` | Work |
+| `GET /api/sessions/:id/review-pack` · `POST …/review` · `POST …/verify` | Review and verification |
+| `GET/POST /api/sessions/:id/comments` · `POST …/comments/:c/{resolve,apply}` | Comments and suggestions |
+| `GET /api/review/queue` | Ranked review queue within the attention budget |
+| `GET /api/provenance[/:rev]` | Signed record for a revision; chain + audit verification |
+| `POST /api/runner/claim` · `POST /api/runner/jobs/:id/result` | Runner protocol |
+| `GET /api/events?after=&wait=` | Long-poll audit events |
+| `POST /api/identities` · `POST /api/config` · `POST /api/import` · `GET /api/export` | Admin, import, `git fast-import` export |
+| `/git/<repo>/…` · `/mcp` | Git smart HTTP · MCP (Streamable HTTP) |
+
+## Security notes
+
+- **Runners execute agent-written code.** Run them in a sandbox with no secrets and a restricted
+  network. `scripts/runner.ts` scrubs the environment, enforces a timeout and a command allowlist, and
+  refuses path traversal, but it is not a sandbox. Cloudflare Containers/Sandbox are the natural home.
+- Without `WEAVE_ADMIN_TOKEN` the service is in **open dev mode**: no authentication at all.
+- Provenance signatures are HMAC with a per-repo server key: they prove the record came from this
+  server and is unmodified; the hash chain makes tampering evident. They are not publicly verifiable
+  (asymmetric signatures are on the roadmap). Only a hash of the prompt is stored.
+- Identities and tokens are per repository.
+
+## Known limits (honest list)
+
+- **Not tested against GitHub.** The mirror was verified against a local `git http-backend`, never a
+  real GitHub remote. Try it on a scratch repo first.
+- Sharded repos: a session lives on one shard (no cross-shard atomic landing); the git bridge, mirror
+  and `export` serve the `main` shard only.
+- The semantic gate is a regex-based heuristic (TS/JS/Go/Python declarations); it flags
+  conservatively and cannot see runtime behavior. Tree-sitter would replace it.
+- The Git bridge is text-only (no binaries, symlinks, submodules), linear history, no tags or other
+  branches, full-pack fetches. See `src/git/README.md`.
+- State is loaded into memory per Durable Object (large repos need lazy loading). Check runners are
+  pull-based and bring-your-own; Weave does not provision preview environments (runners can report
+  a preview URL).
+- No issues, projects, code search, web code browser, forks, or notifications. Weave is a
+  collaboration layer for agent-scale change, not a GitHub clone.
 
 ## Layout
 
-- `src/merge.ts`: dependency-free diff3 merge
-- `src/repo.ts`: sessions, intent, landing, review (pure logic, fully unit-tested)
-- `src/index.ts`: Worker + `RepoDO` Durable Object
-- `src/semantic.ts`: symbol-level risk detection for clean merges
-- `src/export.ts`: Weave history to real Git commits
-- `src/dashboard.ts`: live dashboard
-- `src/scenario.ts`: the scripted 6-agent demo
+`src/repo.ts` core state machine · `src/merge.ts` diff3 · `src/semantic.ts` interaction detector ·
+`src/review.ts` risk scoring · `src/store.ts` SQLite/R2 persistence · `src/api.ts` router ·
+`src/index.ts` Worker + Durable Object · `src/mcp.ts` MCP · `src/git/` Git bridge ·
+`sdk/` clients · `scripts/` runner, demo, import · `test/` unit tests · `test-e2e/` live end-to-end ·
+`docs/RESEARCH.md` design rationale.
 
-## Roadmap
-
-Real parsers (tree-sitter) behind the semantic gate, Weave-run test execution, and a
-WebSocket event stream in place of dashboard polling.
-
-## License
-
-MIT
-
-See [docs/RESEARCH.md](docs/RESEARCH.md) for what Weave's design is based on.
+MIT licensed.
