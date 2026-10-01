@@ -293,8 +293,8 @@ print("python ok")
 // ---------------------------------------------------------------- shards
 await step("sharded repo: sessions on different shards land independently with their own revisions", async () => {
   const sh = "sharded";
-  const A = as(ids.alice, sh), B = as(ids.bob, sh);
-  const adm = as(ADMIN, sh);
+  const adm = as(ADMIN, sh); // identities are per repository, so mint one for this repo
+  const A = as((await adm.createIdentity({ name: "alice", kind: "agent" })).token, sh);
   await adm.configure({ shards: { web: ["web/"], api: ["api/"] } });
   await adm.request("POST", "import", { files: { "web/a.js": "1\n", "api/b.js": "2\n", "README.md": "x\n" }, message: "seed" });
   const sw = await A.open({ goal: "web", intent: ["web/a.js"] });
@@ -310,7 +310,6 @@ await step("sharded repo: sessions on different shards land independently with t
   assert.ok(st.shards.web >= 2 && st.shards.api >= 2);
   assert.equal(st.files["web/a.js"], "11\n");
   assert.equal(st.files["api/b.js"], "22\n");
-  void B;
 });
 
 // ---------------------------------------------------------------- scale: R2 offload + restart

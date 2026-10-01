@@ -316,6 +316,8 @@ export default {
       return stubFor(env, decodeURIComponent(g[1]), "main").fetch(new Request(inner, req));
     }
     if (url.pathname === "/mcp") {
+      if (env.WEAVE_ADMIN_TOKEN && !(await authenticate(req, env, url.searchParams.get("repo") ?? "default")))
+        return json({ error: "authentication required: send Authorization: Bearer <token>" }, 401, { "www-authenticate": "Bearer" });
       // MCP tools dispatch through the same authenticated API path as everything else
       const dispatch = async (method: "GET" | "POST", path: string, body?: unknown) => {
         const headers = new Headers(req.headers);
