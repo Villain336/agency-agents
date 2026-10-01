@@ -59,11 +59,27 @@ export class Weave {
   readTrunk = async (path: string) => (await this.request("GET", `trunk/file?path=${encodeURIComponent(path)}`)).content as string | null;
   /** Read trunk and learn which revision you read; pass it as `baseRev` to open() or `basedOn` to write(). */
   readTrunkAt = async (path: string) => (await this.request("GET", `trunk/file?path=${encodeURIComponent(path)}`)) as { content: string | null; rev: number };
+  // tasks, notifications, tags, releases
+  createTask = (o: { title: string; body?: string; labels?: string[]; priority?: string; dependsOn?: number[] }) => this.request("POST", "tasks", o);
+  tasks = (f: { status?: string; label?: string; q?: string } = {}) => this.request("GET", "tasks?" + new URLSearchParams(Object.entries(f).filter(([, v]) => v) as [string, string][]));
+  nextTask = (labels?: string[]) => this.request("GET", "tasks/next" + (labels?.length ? "?labels=" + labels.join(",") : ""));
+  task = (n: number) => this.request("GET", `tasks/${n}`);
+  claimTask = (n: number, leaseSec?: number) => this.request("POST", `tasks/${n}/claim`, { leaseSec });
+  heartbeatTask = (n: number, leaseSec?: number) => this.request("POST", `tasks/${n}/heartbeat`, { leaseSec });
+  releaseTask = (n: number) => this.request("POST", `tasks/${n}/release`, {});
+  closeTask = (n: number) => this.request("POST", `tasks/${n}/close`, {});
+  commentTask = (n: number, body: string) => this.request("POST", `tasks/${n}/comment`, { body });
+  notifications = (unread = false) => this.request("GET", "notifications" + (unread ? "?unread=1" : ""));
+  markRead = (o: { ids?: string[]; all?: boolean }) => this.request("POST", "notifications/read", o);
+  tag = (name: string, o: { rev?: number; message?: string } = {}) => this.request("POST", "tags", { name, ...o });
+  tags = () => this.request("GET", "tags");
+  release = (o: { tag: string; title?: string; notes?: string; prerelease?: boolean }) => this.request("POST", "releases", o);
+  claimReview = (session: string, leaseSec?: number) => this.request("POST", `sessions/${session}/claim-review`, { leaseSec });
   history = (limit = 20) => this.request("GET", `commits?limit=${limit}`);
   provenance = (rev: number) => this.request("GET", `provenance/${rev}`);
 
   // sessions
-  open = async (o: { goal: string; intent?: string[]; id?: string; model?: string; prompt?: string; agent?: string; baseRev?: number }) => (await this.request("POST", "sessions", o)).session as { id: string; status: Status; baseRev: number };
+  open = async (o: { goal: string; intent?: string[]; id?: string; model?: string; prompt?: string; agent?: string; baseRev?: number; taskNumber?: number }) => (await this.request("POST", "sessions", o)).session as { id: string; status: Status; baseRev: number };
   read = async (id: string, path: string) => (await this.request("GET", `sessions/${id}/file?path=${encodeURIComponent(path)}`)).content as string | null;
   /** `basedOn`: the trunk revision you derived `content` from; stale edits are rejected instead of reverting others. */
   write = (id: string, path: string, content: string | null, basedOn?: number) => this.request("POST", `sessions/${id}/file`, { path, content, basedOn });
