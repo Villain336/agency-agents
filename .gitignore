@@ -5,3 +5,4 @@ node_modules
 video/out/
 __pycache__/
 *.pyc
+test-ui/shots/
