@@ -78,6 +78,21 @@ export interface Config {
   merge: { lists: boolean; union: string[] };
   /** set on forks: where this repository's history was copied from */
   forkedFrom?: { repo: string; rev: number };
+  /** required reviewers by path (CODEOWNERS semantics: the last matching rule wins); owners are identity names or `team:<name>` */
+  owners?: OwnerRule[];
+}
+
+export interface OwnerRule {
+  pattern: string;
+  owners: string[];
+}
+
+export interface Team {
+  name: string;
+  members: string[];
+  description: string;
+  createdBy: string;
+  createdAt: number;
 }
 
 export interface Conflict {
@@ -301,6 +316,7 @@ export const CONFIG_FILE = "weave.json";
 export interface State {
   rev: number;
   tasks: Record<string, Task>;
+  teams: Record<string, Team>;
   notifications: Notification[];
   tags: Record<string, Tag>;
   releases: Record<string, Release>;
@@ -333,7 +349,7 @@ export class WeaveError extends Error {
 export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [], merge: { lists: true, union: [] } });
 
 export const emptyState = (): State => ({
-  rev: 0, tasks: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
+  rev: 0, tasks: {}, teams: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
   config: defaultConfig(), secrets: { signingKey: randomToken("sk", 32) }, auditHead: "", mirror: { lastRev: 0 },
   seq: { event: 0, comment: 0, job: 0, outbox: 0, identity: 0, task: 0, notification: 0 }, reviewPaths: [],
 });
@@ -370,6 +386,39 @@ const significant = (l: string) => l.trim().length > 3;
 export function globMatch(path: string, pattern: string): boolean {
   const re = new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*") + "$");
   return re.test(pattern.includes("/") ? path : path.slice(path.lastIndexOf("/") + 1));
+}
+
+/** CODEOWNERS-style glob: `*` within a segment, `**` across segments, leading `/` anchors, trailing `/` or a bare name matches a directory subtree. */
+export function matchOwnerPattern(pattern: string, path: string): boolean {
+  let p = pattern.trim();
+  if (!p) return false;
+  const anchored = p.startsWith("/") || p.slice(0, -1).includes("/");
+  p = p.replace(/^\//, "");
+  const dir = p.endsWith("/");
+  if (dir) p = p.slice(0, -1);
+  let re = "";
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i];
+    if (ch === "*" && p[i + 1] === "*") {
+      re += ".*";
+      i++;
+      if (p[i + 1] === "/") i++;
+    } else if (ch === "*") re += "[^/]*";
+    else if (ch === "?") re += "[^/]";
+    else re += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${re}(?:/.*)?$`).test(path) && (dir ? path !== p && new RegExp(`^${anchored ? "" : "(?:.*/)?"}${re}/`).test(path) : true);
+}
+
+export function parseCodeowners(text: string): OwnerRule[] {
+  const out: OwnerRule[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s#.*$/, "").trim();
+    if (!line || line.startsWith("#")) continue;
+    const [pattern, ...owners] = line.split(/\s+/);
+    out.push({ pattern, owners: owners.map((o) => o.replace(/^@/, "")) });
+  }
+  return out;
 }
 
 export class Repo {
@@ -443,6 +492,7 @@ export class Repo {
     if (patch.policy) c.policy = patch.policy;
     if (patch.merge) c.merge = { lists: patch.merge.lists !== false, union: patch.merge.union ?? [] };
     if (patch.mirror !== undefined) c.mirror = patch.mirror;
+    if (patch.owners) c.owners = patch.owners.map((o) => ({ pattern: String(o.pattern), owners: o.owners.map(String) }));
     if (patch.webhooks)
       c.webhooks = patch.webhooks.map((w, i) => ({ id: w.id ?? `wh${i + 1}`, url: w.url, secret: w.secret ?? "", events: w.events?.length ? w.events : ["*"] }));
     this.log("config", "repository configuration updated");
@@ -751,8 +801,8 @@ export class Repo {
       paths: Object.keys(r.changes), before: (p) => this.head(p), after: r.changes, semantic: r.risks, merged: r.merged,
       protectedPaths: this.s.config.reviewPaths, recentRejects: mine.filter((x) => x.status === "rejected").length, policy: this.policy(),
     });
-    if (r.changes[CONFIG_FILE] !== undefined && risk.need !== "human")
-      return { ...risk, score: Math.max(risk.score, this.policy().humanAbove), tier: "high", need: "human", reasons: [...risk.reasons, `+config: ${CONFIG_FILE} changes checks, policy and review rules, so a human approves it`] };
+    if ((r.changes[CONFIG_FILE] !== undefined || r.changes["CODEOWNERS"] !== undefined || r.changes[".github/CODEOWNERS"] !== undefined) && risk.need !== "human")
+      return { ...risk, score: Math.max(risk.score, this.policy().humanAbove), tier: "high", need: "human", reasons: [...risk.reasons, `+config: ${CONFIG_FILE} / CODEOWNERS change checks, policy and review rules, so a human approves it`] };
     return risk;
   }
 
@@ -850,9 +900,11 @@ export class Repo {
       return { status: "needs_verify", risks: r.risks, risk };
     }
     // 3. risk-tiered review
-    if (risk.need !== "none" && !this.approved(s, risk.need)) {
+    const owners = this.requiredOwners(s, Object.keys(r.changes));
+    const ownersMissing = owners.filter((o) => !o.satisfied);
+    if ((risk.need !== "none" && !this.approved(s, risk.need)) || ownersMissing.length) {
       if (s.status !== "in_review") this.log("review_requested", `${s.agent}'s ${risk.tier}-risk change (${risk.score}) needs ${risk.need === "human" ? "a human" : "a"} reviewer: ${risk.reasons.slice(0, 3).join("; ")}`, s);
-      if (s.status !== "in_review") this.notifyReviewers(s, risk.need);
+      if (s.status !== "in_review") this.notifyReviewers(s, risk.need, ownersMissing.flatMap((o) => o.owners));
       s.status = "in_review";
       return { status: "in_review", risk };
     }
@@ -1249,6 +1301,8 @@ export class Repo {
     if (this.s.config.checks.length && !evidence.some((e) => e.current && e.passed)) warnings.push(evidence.length ? "Check evidence is not current for these edits (stale or from earlier code); a pass on other code proves little." : "No check evidence yet.");
     for (const v of this.revertsOf(s, r.changes)) warnings.push(`Would remove ${v.lines} lines that ${v.agent} landed in r${v.rev} (${v.path}).`);
     for (const k of r.risks) warnings.push(`Interacts with concurrent work: ${k.detail}`);
+    const requiredOwners = this.requiredOwners(s, Object.keys(r.changes));
+    for (const o of requiredOwners.filter((x) => !x.satisfied)) warnings.push(`Needs approval from a code owner of ${o.pattern}: ${o.owners.join(", ")}.`);
     return {
       warnings, behindBy,
       id: s.id, agent: s.agent, goal: s.goal, status: s.status, model: s.model, baseRev: s.baseRev, headRev: this.s.rev,
@@ -1256,7 +1310,7 @@ export class Repo {
       evidence,
       previews: s.previews,
       stats: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) },
-      files, comments: this.comments(id),
+      files, comments: this.comments(id), requiredOwners,
     };
   }
 
@@ -1473,9 +1527,11 @@ export class Repo {
     for (const x of this.s.notifications) if (x.to === to && !x.read && (f.all || f.ids?.includes(x.id))) (x.read = true), n++;
     return { marked: n };
   }
-  private notifyReviewers(s: Session, need: Need) {
+  private notifyReviewers(s: Session, need: Need, owners: string[] = []) {
+    for (const o of this.expandOwners(owners)) this.notify(o, "review_requested", `${s.agent}'s change needs your review as a code owner: ${s.goal}`, { kind: "session", id: s.id }, s.agent);
     for (const i of Object.values(this.s.identities)) {
       if (i.disabled || i.name === s.agent) continue;
+      if (owners.length) continue; // owners were asked; don't page everyone
       if (i.kind === "human" || (i.kind === "reviewer" && need !== "human")) this.notify(i.name, "review_requested", `${s.agent}'s change needs review: ${s.goal}`, { kind: "session", id: s.id }, s.agent);
     }
   }
@@ -1561,7 +1617,65 @@ export class Repo {
       if (!j.merge || typeof j.merge !== "object" || (j.merge.union !== undefined && !strs(j.merge.union))) return { error: "weave.json: merge must be {lists?, union?: string[]}" };
       patch.merge = { lists: j.merge.lists !== false, union: j.merge.union ?? [] };
     }
+    if (j.owners !== undefined) {
+      if (!Array.isArray(j.owners) || !j.owners.every((o: any) => o && typeof o.pattern === "string" && strs(o.owners))) return { error: "weave.json: owners must be a list of {pattern, owners: string[]}" };
+      patch.owners = j.owners;
+    }
     return { patch };
+  }
+
+  // ---- teams and code owners -----------------------------------------------
+  createTeam(name: string, members: string[], by: string, description = ""): Team {
+    if (!/^[A-Za-z0-9][\w.-]{0,38}$/.test(name)) throw new WeaveError("invalid team name: letters, digits, '.', '_', '-'");
+    if (this.s.teams[name]) throw new WeaveError(`team ${name} already exists`, 409);
+    const t: Team = { name, members: [...new Set(members)], description, createdBy: by, createdAt: this.now() };
+    this.s.teams[name] = t;
+    this.log("team", `${by} created team ${name}`, undefined, by);
+    return t;
+  }
+  getTeam(name: string): Team {
+    const t = this.s.teams[name];
+    if (!t) throw new WeaveError(`no such team: ${name}`, 404);
+    return t;
+  }
+  listTeams(): Team[] {
+    return Object.values(this.s.teams).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  updateTeam(name: string, p: { add?: string[]; remove?: string[]; description?: string }): Team {
+    const t = this.getTeam(name);
+    t.members = [...new Set([...t.members, ...(p.add ?? [])])].filter((m) => !p.remove?.includes(m));
+    if (p.description !== undefined) t.description = p.description;
+    return t;
+  }
+  deleteTeam(name: string) {
+    this.getTeam(name);
+    delete this.s.teams[name];
+  }
+  private expandOwners(owners: string[]): Set<string> {
+    const out = new Set<string>();
+    for (const o of owners) {
+      if (o.startsWith("team:")) for (const m of this.s.teams[o.slice(5)]?.members ?? []) out.add(m);
+      else out.add(o);
+    }
+    return out;
+  }
+  /** Rules from a CODEOWNERS file in the repo, then the configured ones (so configuration wins). */
+  ownerRules(): OwnerRule[] {
+    const file = this.head("CODEOWNERS") ?? this.head(".github/CODEOWNERS");
+    return [...(file ? parseCodeowners(file) : []), ...(this.s.config.owners ?? [])];
+  }
+  /** For each rule that governs one of `paths` (last match wins per path): who may satisfy it, and whether someone has. */
+  requiredOwners(s: Session, paths: string[]): { pattern: string; owners: string[]; satisfied: boolean }[] {
+    const rules = this.ownerRules();
+    const hit = new Map<string, OwnerRule>();
+    for (const p of paths) {
+      for (let i = rules.length - 1; i >= 0; i--) if (matchOwnerPattern(rules[i].pattern, p)) {
+        if (rules[i].owners.length) hit.set(rules[i].pattern + "\0" + rules[i].owners.join(","), rules[i]);
+        break;
+      }
+    }
+    const approvers = new Set(s.approvals.filter((a) => a.by !== s.agent).map((a) => a.by));
+    return [...hit.values()].map((r) => ({ pattern: r.pattern, owners: r.owners, satisfied: [...this.expandOwners(r.owners)].some((o) => approvers.has(o) && o !== s.agent) }));
   }
 
   // ---- provenance -----------------------------------------------------

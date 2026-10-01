@@ -40,6 +40,12 @@ export function forgeRoute(c: Ctx): unknown {
     if (method === "GET") return repo.notificationsFor(me(c), { unread: url.searchParams.get("unread") === "1" });
     if (id === "read") return repo.markRead(me(c), { ids: body.ids, all: !!body.all });
   }
+  if (a === "teams") {
+    if (method === "GET") return id ? repo.getTeam(id) : repo.listTeams();
+    if (!id) return repo.createTeam(String(body.name ?? ""), body.members ?? [], me(c), body.description);
+    if (sub === "delete") return (repo.deleteTeam(id), { ok: true });
+    return repo.updateTeam(id, body);
+  }
   if (a === "tags") {
     if (method === "GET") return repo.listTags();
     return repo.createTag(String(body.name ?? ""), { rev: body.rev, message: body.message, tagger: me(c) });

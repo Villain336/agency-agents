@@ -105,3 +105,18 @@ test("forge routes: tasks, next, claims, notifications, tags, releases", () => {
   assert.equal(call(repo, "GET", "tags").length, 1);
   assert.deepEqual(requiredScopes("POST", ["sessions", "s1", "claim-review"]), ["review"]);
 });
+
+test("teams routes and CODEOWNERS via config", () => {
+  const repo = new Repo();
+  repo.seed({ "a.ts": "1" });
+  call(repo, "POST", "teams", { agent: "root", name: "core", members: ["ann"] });
+  assert.equal(call(repo, "GET", "teams/core").members[0], "ann");
+  call(repo, "POST", "teams/core", { add: ["bo"] });
+  assert.equal(call(repo, "GET", "teams").length, 1);
+  assert.deepEqual(requiredScopes("POST", ["teams"]), ["admin"]);
+  call(repo, "POST", "config", { owners: [{ pattern: "a.ts", owners: ["team:core"] }] });
+  call(repo, "POST", "sessions", { agent: "bot", goal: "g", id: "s" });
+  call(repo, "POST", "sessions/s/file", { path: "a.ts", content: "2" });
+  assert.equal(call(repo, "POST", "sessions/s/submit", {}).status, "in_review");
+  assert.equal(call(repo, "POST", "sessions/s/review", { reviewer: "bo", approve: true, kind: "reviewer" }).status, "landed");
+});
