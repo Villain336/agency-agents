@@ -110,13 +110,13 @@ export function route(c: Ctx): unknown {
       return repo.jobResult(sub, c.actor.open ? String(body.runner ?? "runner") : c.actor.name, { passed: !!body.passed, output: body.output, durationMs: body.durationMs, previewUrl: body.previewUrl });
     if (a === "sessions" && !id) {
       const agent = c.actor.open ? String(body.agent ?? "anonymous") : c.actor.name;
-      return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent, actor: c.actor, model: body.model, prompt: body.prompt, baseRev: body.baseRev });
+      return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent ?? undefined, actor: c.actor, model: body.model ?? undefined, prompt: body.prompt ?? undefined, baseRev: body.baseRev ?? undefined });
     }
     if (a === "sessions" && id) {
-      if (sub === "file") return (repo.write(id, body.path, body.content, c.actor, body.basedOn), { ok: true });
+      if (sub === "file") return (repo.write(id, body.path, body.content, c.actor, body.basedOn ?? undefined), { ok: true });
       if (sub === "intent") return { warnings: repo.declare(id, body.paths ?? []) };
-      if (sub === "submit") return repo.submit(id, body.message, c.actor, { allowRevert: !!body.allowRevert });
-      if (sub === "resolve") return typeof body.content === "string" ? repo.resolveWith(id, body.path, body.content, c.actor, body.basedOn) : repo.resolve(id, body.path, body.choices ?? body.how, c.actor);
+      if (sub === "submit") return repo.submit(id, body.message ?? undefined, c.actor, { allowRevert: !!body.allowRevert });
+      if (sub === "resolve") return typeof body.content === "string" ? repo.resolveWith(id, body.path, body.content, c.actor, body.basedOn ?? undefined) : repo.resolve(id, body.path, body.choices ?? body.how, c.actor);
       if (sub === "rerun") return repo.rerunChecks(id);
       if (sub === "abandon") return (repo.abandon(id, c.actor), { ok: true });
       if (sub === "verify") return repo.verify(id, who(c, "verifier"), !!body.passed, body.note);

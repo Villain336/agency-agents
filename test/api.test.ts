@@ -74,3 +74,12 @@ test("runner routes: claim a job and report its result through the router", () =
   call(repo, "POST", `runner/jobs/${job.id}/result`, { runner: "r1", passed: true, output: "ok" });
   assert.equal(repo.session("s").status, "landed");
 });
+
+test("null optional fields (as sent by the Python SDK) mean 'not provided'", () => {
+  const repo = new Repo();
+  repo.seed({ "a.ts": "1" });
+  const out = call(repo, "POST", "sessions", { id: "s", agent: "a", goal: "g", baseRev: null, model: null, intent: null });
+  assert.equal(out.session.baseRev, 1);
+  call(repo, "POST", "sessions/s/file", { path: "a.ts", content: "2", basedOn: null });
+  assert.equal(call(repo, "POST", "sessions/s/submit", { message: null }).status, "landed");
+});

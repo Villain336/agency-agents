@@ -32,7 +32,9 @@ class Weave:
         headers = {"content-type": "application/json"}
         if self.token:
             headers["authorization"] = f"Bearer {self.token}"
-        data = json.dumps(body if body is not None else {}).encode() if method == "POST" else None
+        # omit None fields: absent means "use the default", and nulls would be read as explicit values by stricter servers
+        clean = {k: v for k, v in (body or {}).items() if v is not None} if isinstance(body, dict) else (body or {})
+        data = json.dumps(clean).encode() if method == "POST" else None
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
