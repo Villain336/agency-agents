@@ -1,0 +1,20 @@
+$ git clone http://gitdemo:<token>@localhost:8789/git/swarm
+(cloned)
+$ git log --oneline | head -8
+b6992ed add chunk(xs,size)
+ee5dba7 README slugify bullet
+a4f09e3 add omit(obj, keys)
+af81eed add pick
+3ce51bf add slugify
+5c13659 add groupBy
+a69a1fd add zip
+857b144 add median(xs)
+$ git log -1 --format=%B   # the last landed change, with Weave's trailers
+cai: add chunk(xs,size)
+
+Weave-Session: cai-1
+Weave-Rev: r16
+$ git fsck --strict
+(clean)
+$ grep -c "^test(" lib.test.js
+24

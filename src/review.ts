@@ -29,6 +29,8 @@ export interface RiskReport {
 }
 
 export interface RiskInput {
+  /** substantial work landed by other agents that this change would remove (author confirmed it) */
+  reverts?: { rev: number; agent: string; path: string; lines: number }[];
   paths: string[];
   before: (p: string) => string | null;
   after: Record<string, string | null>;
@@ -78,10 +80,11 @@ export function scoreRisk(i: RiskInput): RiskReport {
   if (testsRemoved) add(30, `removes ${testsRemoved} test case(s)`);
   const touchesCode = i.paths.some((p) => !TESTISH.test(p) && /\.(ts|tsx|js|jsx|py|go|rs|java|rb|c|cc|cpp)$/.test(p));
   if (touchesCode && !i.paths.some((p) => TESTISH.test(p))) add(10, "code changed without tests");
+  for (const v of i.reverts ?? []) add(40, `removes ${v.lines} lines of work landed by ${v.agent} in r${v.rev}`);
   if (i.recentRejects) add(10, "author has recently rejected changes");
   score = Math.min(100, score);
   let tier: Tier = score >= i.policy.humanAbove ? "high" : score < i.policy.autoLandBelow ? "low" : "medium";
-  if ((prot.length || testsRemoved) && tier === "low") tier = "medium"; // protected paths and removed tests always get a reviewer
+  if ((prot.length || testsRemoved || i.reverts?.length) && tier === "low") tier = "medium"; // protected paths and removed tests always get a reviewer
   const need: Need = tier === "high" ? "human" : tier === "medium" ? "any" : "none";
   return { score, tier, need, reasons };
 }

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Weave scenes</title>
+<style>
+:root{--bg:#0b0d12;--panel:#12151c;--line:#242a36;--fg:#e8ebf2;--dim:#8a93a6;--acc:#f6821f;--ok:#37d39a;--bad:#ff5d6c;--warn:#f5b942;--cool:#6ea8fe}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:18px/1.45 ui-sans-serif,system-ui,sans-serif;overflow:hidden}
+#stage{height:100vh;display:flex;flex-direction:column;justify-content:center;padding:0 90px}
+h1{font-size:76px;margin:0 0 14px;color:var(--acc);letter-spacing:-.02em}h2{font-size:40px;margin:0 0 22px;letter-spacing:-.01em}
+.sub{font-size:28px;color:var(--dim);margin:0}.big{font-size:66px;font-weight:700;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:30px;align-items:flex-end}.kpi{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px 26px}
+.kpi small{color:var(--dim);display:block;font-size:15px;letter-spacing:.08em;text-transform:uppercase}.kpi .big{display:block;margin-top:6px}
+.bar{height:34px;border-radius:7px;margin:10px 0;display:flex;align-items:center;padding-left:12px;font-size:17px;font-weight:600;color:#0b0d12;white-space:nowrap;transition:width 1.4s cubic-bezier(.2,.8,.2,1)}
+.lab{display:flex;justify-content:space-between;color:var(--dim);font-size:16px;margin-top:14px}
+pre{background:#080a0e;border:1px solid var(--line);border-radius:14px;padding:22px 26px;font:17px/1.5 ui-monospace,Menlo,monospace;color:#cfd6e6;margin:0;overflow:hidden;white-space:pre-wrap}
+pre .p{color:var(--ok)}pre .c{color:var(--dim)}
+table{border-collapse:collapse;width:100%;font-size:19px}th,td{text-align:left;padding:9px 14px;border-bottom:1px solid var(--line)}th{color:var(--dim);font-weight:600;font-size:14px;letter-spacing:.08em;text-transform:uppercase}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.cool{color:var(--cool)}.dim{color:var(--dim)}
+.quote{background:var(--panel);border-left:5px solid var(--bad);padding:18px 24px;border-radius:0 14px 14px 0;font-size:24px;margin:14px 0}.quote small{display:block;color:var(--dim);font-size:15px;margin-top:8px}
+#caption{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);max-width:1050px;background:rgba(8,10,14,.92);border:1px solid #2b3345;border-radius:14px;padding:14px 26px;font-size:22px;text-align:center;opacity:0;transition:opacity .35s;pointer-events:none}
+#caption.on{opacity:1}
+.fade{animation:f .6s ease both}@keyframes f{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+</style></head><body><div id="stage"></div><div id="caption"></div>
+<script>
+const q=new URLSearchParams(location.search),scene=q.get('scene');
+const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+window.setCaption=t=>{const c=$('#caption');if(!t){c.classList.remove('on');return}c.textContent=t;c.classList.add('on')};
+const J=async u=>(await fetch(u)).json(), T=async u=>(await fetch(u)).text();
+const fmt=n=>Number(n).toLocaleString();
+const S={
+ async title(){ $('#stage').innerHTML=`<div class="fade"><h1>Weave</h1><p class="sub">Many agents. One trunk. Zero branches.</p><p class="sub" style="margin-top:30px;font-size:22px">A collaboration layer for AI agents, built on Cloudflare Workers, Durable Objects and R2</p></div>`},
+ async problem(){ const b=await J('/data/bench.json'); const r=b.rows.find(x=>x.agents===100&&x.skew===1&&x.concurrency===5)||b.rows.at(-1); const P=r.results.find(x=>x.policy==='push-race'), Q=r.results.find(x=>x.policy.startsWith('queue')), W=r.results.find(x=>x.policy.startsWith('weave'));
+   const max=Math.max(P.ciRuns,Q.ciRuns,W.ciRuns); const bar=(x,c,label)=>`<div class="bar" style="width:${Math.max(6,100*x.ciRuns/max)}%;background:${c}">${label}: ${fmt(x.ciRuns)} test runs</div>`;
+   $('#stage').innerHTML=`<div class="fade"><h2>Git's workflow breaks at agent scale</h2><p class="sub">${r.agents} agents land one change each in a hot repo. Same workload, same build capacity:</p><div style="margin-top:34px">${bar(P,'var(--bad)','push, rebase, retry (plain git)')}${bar(Q,'var(--cool)','merge queue, 5 builds at once')}${bar(W,'var(--ok)','Weave')}</div><div class="lab"><span>real git merges; Weave runs its real code; time is simulated (CI = 60s)</span><span>lower is better</span></div></div>`},
+ async swarm(){ $('#stage').innerHTML=''},
+ async bench(){ const b=await J('/data/bench.json'); const rows=b.rows.filter(r=>r.skew===1&&r.concurrency===5);
+   const body=rows.map(r=>{const Q=r.results.find(x=>x.policy.startsWith('queue')),W=r.results.find(x=>x.policy.startsWith('weave')),P=r.results.find(x=>x.policy==='push-race');return `<tr><td>${r.agents}</td><td class="bad">${P?fmt(P.makespanSec)+'s':'n/a'}</td><td class="cool">${fmt(Q.makespanSec)}s</td><td class="ok">${fmt(W.makespanSec)}s</td><td>${P?fmt(P.ciRuns):'n/a'}</td><td>${Q.ciRuns}</td><td>${W.ciRuns}</td></tr>`}).join('');
+   $('#stage').innerHTML=`<div class="fade"><h2>Weave matches a merge queue, without branches or PRs</h2><table><tr><th>agents</th><th>push-race time</th><th>queue time</th><th>Weave time</th><th>push-race CI</th><th>queue CI</th><th>Weave CI</th></tr>${body}</table><p class="sub" style="margin-top:22px;font-size:20px">Hot-spot workload, 5 builds in parallel. Baselines use real <code>git merge-file</code>. Parity with a queue is the honest result; the push-race column is what agents do today.</p></div>`},
+ async trust(){ const r=await J('/data/swarm-report.json'); const p=r.provenanceSample.record;
+   $('#stage').innerHTML=`<div class="fade"><h2>Every landed change carries signed provenance</h2><pre>${esc(JSON.stringify({rev:p.rev,actor:p.actor,goal:p.goal,risk:p.risk,merged:p.merged,evidence:p.evidence,approvals:p.approvals,prevHash:String(p.prevHash).slice(0,16)+'…'},null,1))}</pre><p class="sub" style="margin-top:20px;font-size:22px">hash <span class="ok">${esc(r.provenanceSample.hashPrefix)}…</span> · HMAC signature <span class="ok">${esc(r.provenanceSample.signaturePrefix)}…</span> · chain over ${r.chain.checked} commits: <span class="${r.chain.ok?'ok':'bad'}">${r.chain.ok?'verified':'BROKEN'}</span></p></div>`},
+ async review(){ const r=await J('/data/review-quotes.json'); const qs=r.slice(0,3).map(x=>`<div class="quote">“${esc(x.note)}”<small>${esc(x.by)} (reviewer agent) rejected ${esc(x.agent)}'s change</small></div>`).join('');
+   $('#stage').innerHTML=`<div class="fade"><h2>A reviewer agent caught what green checks could not</h2>${qs}<p class="sub" style="font-size:22px;margin-top:16px">Weave now flags removed tests and stale diffs itself, so reviewers spend attention where it matters.</p></div>`},
+ async git(){ const t=await T('/data/git-transcript.txt'); const html=esc(t).replace(/^(\$ .*)$/gm,'<span class="p">$1</span>');
+   $('#stage').innerHTML=`<div class="fade"><h2>It is a real Git remote</h2><pre style="font-size:16px;line-height:1.45;max-height:560px">${html}</pre></div>`},
+ async honest(){ const b=await J('/data/bench.json'); const d=b.detector, m=b.mergeAgreement;
+   const rows=d.map(x=>`<tr><td>${esc(x.category)}</td><td>${x.shouldFlag?'flag':'ignore'}</td><td class="${(x.shouldFlag&&x.rate>.9)||(!x.shouldFlag&&x.rate===0)?'ok':'bad'}">${(x.rate*100).toFixed(0)}%</td></tr>`).join('');
+   $('#stage').innerHTML=`<div class="fade"><h2>Measured, with the limits shown</h2><table><tr><th>semantic-interaction detector</th><th>expected</th><th>flagged</th></tr>${rows}</table><p class="sub" style="margin-top:20px;font-size:21px">Merge engine vs real <code>git merge-file</code> on ${fmt(m.cases)} random concurrent edits: <span class="ok">${(m.agreement*100).toFixed(1)}% agreement</span>. Transitive dependencies are a known miss.</p></div>`},
+ async outro(){ const r=await J('/data/swarm-report.json'); $('#stage').innerHTML=`<div class="fade"><h1>Weave</h1><p class="sub">${r.developers} real agents · ${r.landedChanges} changes landed · ${r.totals.conflicts} conflicts handled · final trunk ${r.finalTrunk.testsPassed}/${r.finalTrunk.testsRun} tests passing</p><p class="sub" style="margin-top:26px;font-size:22px">Git remote · MCP server · signed provenance · risk-tiered review · SQLite + R2 · open source</p></div>`},
+};
+(S[scene]||S.title)();
+</script></body></html>

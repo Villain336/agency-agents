@@ -7,7 +7,7 @@
 
 import { canonical, hmacSha256, randomToken, sha256 } from "./crypto.ts";
 import { diffStat, fileDiff, type FileDiff } from "./diff.ts";
-import { merge3, resolveSegments, splitLines, type Choice, type Segment } from "./merge.ts";
+import { diffHunks, merge3, resolveSegments, splitLines, type Choice, type Segment } from "./merge.ts";
 import { DEFAULT_POLICY, scoreRisk, type Need, type Policy, type RiskReport } from "./review.ts";
 import { semanticRisk, type Risk } from "./semantic.ts";
 import { shardOf } from "./shard.ts";
@@ -124,7 +124,9 @@ export interface Session {
   /** train mode: queued changes this one would conflict with; it is not built until they resolve */
   blockedOn?: string[];
   /** what reviewers/verifiers told the author, so the reason is never only in the audit log */
-  feedback?: { type: "rejected" | "verify_failed"; by: string; note: string; ts: number }[];
+  feedback?: { type: "rejected" | "verify_failed" | "reverts"; by: string; note: string; ts: number }[];
+  /** trunk revision at which the current conflicts were computed; resolutions are based on it */
+  conflictRev?: number;
   reviewer?: string;
   landedRev?: number;
   createdAt: number;
@@ -275,6 +277,15 @@ export function upgradeState(s: Partial<State>): State {
 }
 
 const clip = (s: string, n = 4000) => (s.length > n ? s.slice(0, n) + `\n…[${s.length - n} more chars]` : s);
+
+export interface Revert {
+  rev: number;
+  agent: string;
+  path: string;
+  lines: number;
+}
+
+const significant = (l: string) => l.trim().length > 3;
 
 export class Repo {
   s: State;
@@ -584,16 +595,54 @@ export class Repo {
     return { baseRev: this.s.rev, merged: r.merged, files: r.changes, conflicts: r.conflicts, risks: r.risks };
   }
 
-  private riskOf(s: Session, r: ReturnType<Repo["mergeAll"]>): RiskReport {
+  private addedLines = new Map<string, string[]>();
+  /** Significant lines a commit added to a path (cached: commits are immutable). */
+  private addedBy(path: string, rev: number): string[] {
+    const key = `${path}@${rev}`;
+    let v = this.addedLines.get(key);
+    if (!v) {
+      const before = splitLines(this.fileAt(path, rev - 1) ?? "");
+      v = diffHunks(before, splitLines(this.fileAt(path, rev) ?? "")).flatMap((h) => h.lines).filter(significant);
+      this.addedLines.set(key, v);
+      if (this.addedLines.size > 2000) this.addedLines.delete(this.addedLines.keys().next().value!);
+    }
+    return v;
+  }
+
+  /**
+   * Would landing this session erase substantial code another agent recently landed? A textual merge can
+   * be perfectly clean and still do this (an edit derived from a stale read, or a resolution written
+   * against an older trunk), and passing tests prove nothing when the tests were erased with the code.
+   * Looks at recent history (not only commits after the session's base) because a stale read can predate it.
+   */
+  private revertsOf(s: Session, changes: Record<string, string | null>): Revert[] {
+    const out: Revert[] = [];
+    for (const [path, merged] of Object.entries(changes)) {
+      const head = this.head(path);
+      if (head === null) continue;
+      const headLines = splitLines(head);
+      const removed = new Set(diffHunks(headLines, splitLines(merged ?? "")).flatMap((h) => headLines.slice(h.start, h.end)).filter(significant));
+      if (!removed.size) continue;
+      for (const c of this.s.commits) {
+        if (c.rev <= s.baseRev - 8 || c.agent === s.agent || c.sessionId === s.id || c.sessionId === "seed" || !c.paths.includes(path)) continue;
+        const hit = this.addedBy(path, c.rev).filter((l) => removed.has(l)).length;
+        if (hit >= 3) out.push({ rev: c.rev, agent: c.agent, path, lines: hit });
+      }
+    }
+    return out;
+  }
+
+  private riskOf(s: Session, r: ReturnType<Repo["mergeAll"]>, reverts: Revert[] = []): RiskReport {
     const mine = Object.values(this.s.sessions).filter((x) => x.agent === s.agent && x.id !== s.id).slice(-5);
     return scoreRisk({
+      reverts,
       paths: Object.keys(r.changes), before: (p) => this.head(p), after: r.changes, semantic: r.risks, merged: r.merged,
       protectedPaths: this.s.config.reviewPaths, recentRejects: mine.filter((x) => x.status === "rejected").length, policy: this.policy(),
     });
   }
 
   /** Try to land a session onto trunk atomically, subject to policy gates. */
-  submit(id: string, message?: string, actor?: Actor): { status: Status; rev?: number; conflicts?: Conflict[]; risks?: Risk[]; risk?: RiskReport; jobs?: string[]; evidence?: Evidence[] } {
+  submit(id: string, message?: string, actor?: Actor, opts: { allowRevert?: boolean } = {}): { status: Status; rev?: number; conflicts?: Conflict[]; risks?: Risk[]; risk?: RiskReport; jobs?: string[]; evidence?: Evidence[]; reverts?: Revert[] } {
     const s = this.session(id);
     this.assertOwner(s, actor);
     if (s.status === "landed" || s.status === "rejected") throw new WeaveError(`session ${id} is ${s.status}`, 409);
@@ -602,6 +651,9 @@ export class Repo {
     if (r.conflicts.length) {
       s.status = "conflicted";
       s.conflicts = r.conflicts;
+      s.conflictRev = this.s.rev;
+      s.blockedOn = undefined;
+      s.approvals = [];
       this.log("conflict", `${s.agent} hit ${r.conflicts.length} conflict(s) in ${r.conflicts.map((c) => c.path).join(", ")}`, s);
       return { status: "conflicted", conflicts: r.conflicts };
     }
@@ -614,7 +666,16 @@ export class Repo {
       this.log("noop", `${s.agent}'s change was already on trunk; nothing to land`, s);
       return { status: "landed", rev: this.s.rev };
     }
-    const risk = (s.risk = this.riskOf(s, r));
+    const reverts = this.revertsOf(s, r.changes);
+    if (reverts.length && !opts.allowRevert) {
+      s.status = "active";
+      s.blockedOn = undefined;
+      const what = reverts.map((x) => `${x.lines} lines that ${x.agent} landed in r${x.rev} (${x.path})`).join("; ");
+      (s.feedback ??= []).push({ type: "reverts", by: "weave", ts: this.now(), note: `landing this would remove ${what}. Re-read the current trunk, re-apply your change on top of it and put the result in your session; if removing that work is intended, submit with allowRevert.` });
+      this.log("reverts", `${s.agent}'s change would remove work landed by ${[...new Set(reverts.map((x) => x.agent))].join(", ")}; sent back to the author`, s);
+      return { status: "active", reverts };
+    }
+    const risk = (s.risk = this.riskOf(s, r, reverts));
 
     // 1. required checks, run by pull-based runners
     let checked = false;
@@ -679,6 +740,7 @@ export class Repo {
       verifiedBy: s.verified?.by, approvals: s.approvals.map((a) => ({ by: a.by, kind: a.kind })),
     });
     s.status = "landed";
+    s.blockedOn = undefined;
     this.log("landed", `${s.agent} landed r${s.landedRev}${merged ? " (auto-merged with concurrent work)" : ""}: ${msg}`, s);
     this.pump();
     return { status: "landed" as Status, rev: s.landedRev, risk };
@@ -697,6 +759,26 @@ export class Repo {
       // Only sessions whose situation can have changed need another look: parked ones, and ones with no
       // build outstanding (all passed, or stale). A session with a queued/running build is waiting on that
       // build, whose completion re-evaluates it; re-merging it here would be O(queue^2) work per landing.
+      for (const x of Object.values(this.s.sessions)) {
+        if (x.status !== "in_review" && x.status !== "needs_verify") continue;
+        const fresh = this.mergeAll(x);
+        if (!fresh.conflicts.length) {
+          if (!Object.keys(fresh.changes).length) {
+            // everything this change did is already on trunk (someone landed the same thing): nothing left to review
+            x.status = "landed";
+            x.landedRev = this.s.rev;
+            x.blockedOn = undefined;
+            this.log("noop", `${x.agent}'s change was already on trunk; nothing left to review`, x);
+          } else x.risk = this.riskOf(x, fresh, this.revertsOf(x, fresh.changes)); // keep the queue's ranking current
+          continue;
+        }
+        x.status = "conflicted";
+        x.conflicts = fresh.conflicts;
+        x.conflictRev = this.s.rev;
+        x.approvals = [];
+        x.verified = undefined;
+        this.log("conflict", `${x.agent}'s change no longer merges with trunk (${fresh.conflicts.map((c) => c.path).join(", ")}); sent back to the author`, x);
+      }
       const busy = new Set(Object.values(this.s.jobs).filter((j) => j.status === "queued" || j.status === "running").map((j) => j.sessionId));
       const waiting = Object.values(this.s.sessions)
         .filter((x) => x.status === "verifying" && (x.blockedOn?.length || !busy.has(x.id) || this.hasStaleBuild(x)))
@@ -857,6 +939,7 @@ export class Repo {
       c = fresh.conflicts.find((x) => x.path === path);
       if (!c) throw new WeaveError(`no conflict on ${path} against the current trunk`, 404);
       s.conflicts = fresh.conflicts;
+      s.conflictRev = this.s.rev;
     }
     const n = c.segments.filter((x) => x.kind === "conflict").length;
     const choices = typeof how === "string" ? Array<Choice>(n).fill(how) : how;
@@ -867,7 +950,7 @@ export class Repo {
       const deleted = (ch === "ours" && this.head(path) === null) || (ch === "theirs" && s.edits[path] === null);
       s.edits[path] = deleted ? null : pick.join("\n");
     } else s.edits[path] = resolveSegments(c.segments, choices);
-    s.pathBase[path] = this.s.rev;
+    s.pathBase[path] = s.conflictRev ?? this.s.rev;
     s.conflicts = s.conflicts.filter((x) => x !== c);
     s.verified = undefined;
     s.approvals = [];
@@ -885,9 +968,10 @@ export class Repo {
       const c = fresh.conflicts.find((x) => x.path === path);
       if (!c) throw new WeaveError(`no conflict on ${path} against the current trunk`, 404);
       s.conflicts = fresh.conflicts;
+      s.conflictRev = this.s.rev;
     }
     s.edits[path] = content;
-    s.pathBase[path] = this.s.rev;
+    s.pathBase[path] = s.conflictRev ?? this.s.rev;
     s.conflicts = s.conflicts.filter((x) => x.path !== path);
     s.verified = undefined;
     s.approvals = [];
@@ -981,15 +1065,25 @@ export class Repo {
     const r = this.mergeAll(s);
     const risk = r.conflicts.length ? undefined : this.riskOf(s, r);
     const files: FileDiff[] = Object.entries(r.changes).map(([p, after]) => fileDiff(p, this.head(p), after));
+    const behindBy = this.s.rev - s.baseRev;
+    const evidence = s.evidence.map((e) => {
+      const job = this.s.jobs[e.jobId];
+      // evidence only counts if it was produced for exactly these edits and has not gone stale
+      const current = !!job && job.editHash === this.editHash(s) && (job.status === "failed" || this.jobState(job, s) === "pass");
+      return { check: e.check, passed: e.passed, rev: e.rev, runner: e.runner, current };
+    });
+    // Lead with what a reviewer most needs to know: is the diff below even the whole picture?
+    const warnings: string[] = [];
+    if (behindBy > 0) warnings.push(`Behind trunk by ${behindBy} revision(s): this change was started at r${s.baseRev} and trunk is at r${this.s.rev}.`);
+    for (const c of r.conflicts) warnings.push(`This change no longer merges with trunk in ${c.path} (${c.kind}); that file is NOT in the diff below. It needs to go back to the author.`);
+    if (this.s.config.checks.length && !evidence.some((e) => e.current && e.passed)) warnings.push(evidence.length ? "Check evidence is not current for these edits (stale or from earlier code); a pass on other code proves little." : "No check evidence yet.");
+    for (const v of this.revertsOf(s, r.changes)) warnings.push(`Would remove ${v.lines} lines that ${v.agent} landed in r${v.rev} (${v.path}).`);
+    for (const k of r.risks) warnings.push(`Interacts with concurrent work: ${k.detail}`);
     return {
+      warnings, behindBy,
       id: s.id, agent: s.agent, goal: s.goal, status: s.status, model: s.model, baseRev: s.baseRev, headRev: this.s.rev,
       risk, need: risk?.need, approvals: s.approvals, semantic: r.risks, conflicts: r.conflicts.map((c) => ({ path: c.path, kind: c.kind })),
-      evidence: s.evidence.map((e) => {
-        const job = this.s.jobs[e.jobId];
-        // evidence only counts if it was produced for exactly these edits and has not gone stale
-        const current = !!job && job.editHash === this.editHash(s) && (job.status === "failed" || this.jobState(job, s) === "pass");
-        return { check: e.check, passed: e.passed, rev: e.rev, runner: e.runner, current };
-      }),
+      evidence,
       previews: s.previews,
       stats: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) },
       files, comments: this.comments(id),

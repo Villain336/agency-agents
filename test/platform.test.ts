@@ -498,3 +498,135 @@ test("resolveWith requires an actual conflict on that path and respects ownershi
   assert.throws(() => r.resolveWith("s", "f.js", "x", owner), /no conflict/);
   assert.throws(() => r.resolveWith("s", "f.js", "x", other), /belongs to owner/);
 });
+
+// ---- swarm run 1: stale resolutions silently erased teammates' landed work -----
+const lib = (names: string[]) => names.map((n) => `function ${n}(x) {\n  const a = x;\n  const b = a + 1;\n  return b;\n}\n`).join("\n") + `\nmodule.exports = { ${names.join(", ")} };\n`;
+
+test("resolution is based on the trunk the conflict was computed against, so later landings are not erased", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  r.open({ id: "ivy", agent: "ivy", goal: "g" });
+  r.open({ id: "gus", agent: "gus", goal: "g" });
+  r.open({ id: "eli", agent: "eli", goal: "g" });
+  r.write("ivy", "lib.js", lib(["sum", "average"]));
+  r.write("gus", "lib.js", lib(["sum", "capitalize"]));
+  r.write("eli", "lib.js", lib(["sum", "flatten"]));
+  assert.equal(r.submit("ivy").status, "landed"); // r2
+  assert.equal(r.submit("gus").status, "conflicted"); // computed against r2
+  assert.equal(r.submit("eli").status, "conflicted");
+  // eli re-applies on trunk r2 and lands (r3) while gus is still working
+  r.resolveWith("eli", "lib.js", lib(["sum", "average", "flatten"]));
+  assert.equal(r.submit("eli").status, "landed");
+  // gus finishes his resolution, written against the r2 trunk he was shown (it lacks flatten)
+  r.resolveWith("gus", "lib.js", lib(["sum", "average", "capitalize"]));
+  const res = r.submit("gus");
+  // eli's work must still be there, or gus is told about the clash; it must never be silently dropped
+  assert.ok(r.head("lib.js")!.includes("function flatten"), `flatten was erased; gus got: ${res.status}`);
+});
+
+test("a clean merge that removes substantial code another agent landed is stopped and explained", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  r.open({ id: "eli", agent: "eli", goal: "g" });
+  r.write("eli", "lib.js", lib(["sum", "flatten"]));
+  r.submit("eli"); // r2 adds flatten
+  r.open({ id: "bob", agent: "bob", goal: "g" }); // opens after eli landed...
+  r.write("bob", "lib.js", lib(["sum"]) + "// bob's edit\n"); // ...but wrote content derived from the old trunk (stale read)
+  const res = r.submit("bob");
+  assert.equal(res.status, "active");
+  assert.equal(res.reverts![0].agent, "eli");
+  assert.equal(res.reverts![0].rev, 2);
+  assert.ok(r.head("lib.js")!.includes("function flatten"), "nothing landed");
+  assert.match(r.sessionRO("bob").feedback!.at(-1)!.note, /remove[s]? .*r2/i);
+});
+
+test("an author can confirm an intentional removal; it then needs review", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  r.open({ id: "eli", agent: "eli", goal: "g" });
+  r.write("eli", "lib.js", lib(["sum", "flatten"]));
+  r.submit("eli");
+  r.open({ id: "bob", agent: "bob", goal: "remove flatten: it is unused" });
+  r.write("bob", "lib.js", lib(["sum"]));
+  const res = r.submit("bob", undefined, undefined, { allowRevert: true });
+  assert.equal(res.status, "in_review");
+  assert.ok(res.risk!.reasons.some((x) => /removes .*landed/i.test(x)));
+});
+
+test("small edits and ordinary rewrites by the same author are not flagged as reverts", () => {
+  const r = mk({ "lib.js": lib(["sum", "last"]) });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.write("a", "lib.js", lib(["sum", "last"]).replace("a + 1", "a + 2"));
+  assert.equal(r.submit("a").status, "landed");
+  r.open({ id: "b", agent: "alice", goal: "g" }); // same author reworking their own change
+  r.write("b", "lib.js", lib(["sum", "last"]).replace("a + 1", "a + 3"));
+  assert.equal(r.submit("b").status, "landed");
+});
+
+test("a session waiting in review is re-checked when trunk moves: it becomes conflicted, not stale", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  r.setConfig({ policy: { autoLandBelow: 0 } }); // everything needs review
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "lib.js", lib(["sum", "x1"]));
+  r.write("b", "lib.js", lib(["sum", "x2"]));
+  assert.equal(r.submit("a").status, "in_review");
+  assert.equal(r.submit("b").status, "in_review");
+  r.review("a", "rev", true); // a lands; b can no longer merge
+  assert.equal(r.session("b").status, "conflicted");
+  assert.deepEqual(r.session("b").approvals, []);
+});
+
+test("blockedOn is cleared when a parked session leaves the queue", () => {
+  const r = mk({ "f.js": fnFile });
+  withChecks(r, "train");
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "f.js", append("fa"));
+  r.write("b", "f.js", append("fb"));
+  r.submit("a");
+  r.submit("b");
+  assert.deepEqual(r.session("b").blockedOn, ["a"]);
+  r.jobResult(r.claimJob("r")!.id, "r", { passed: true }); // a lands, b is re-evaluated and now conflicts
+  assert.equal(r.session("b").status, "conflicted");
+  assert.equal(r.session("b").blockedOn, undefined);
+});
+
+test("review pack leads with warnings: out-of-date, conflicts, stale evidence, removed work", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  r.setConfig({ checks: [{ name: "unit", command: "t" }], policy: { autoLandBelow: 0 } });
+  r.open({ id: "eli", agent: "eli", goal: "g" });
+  r.open({ id: "bob", agent: "bob", goal: "g" });
+  r.write("eli", "lib.js", lib(["sum", "flatten"]));
+  r.write("bob", "lib.js", lib(["sum", "capitalize"]));
+  r.submit("eli");
+  r.jobResult(r.claimJob("r")!.id, "r", { passed: true });
+  r.review("eli", "rev", true); // lands r2
+  assert.equal(r.submit("bob").status, "conflicted");
+  const pack = r.reviewPack("bob");
+  assert.ok(pack.warnings.some((w: string) => /no longer merges with trunk.*lib\.js/i.test(w)), pack.warnings.join("|"));
+  assert.ok(pack.warnings.some((w: string) => /behind trunk by 1/i.test(w)));
+  assert.equal(pack.behindBy, 1);
+
+  // stale evidence is called out
+  const r2 = mk();
+  r2.setConfig({ checks: [{ name: "unit", command: "t" }], policy: { autoLandBelow: 0 } });
+  r2.open({ id: "s", agent: "a", goal: "g" });
+  r2.write("s", "b.ts", "y");
+  r2.submit("s");
+  r2.jobResult(r2.claimJob("r")!.id, "r", { passed: true });
+  r2.write("s", "b.ts", "z"); // edits change after the passing run
+  assert.ok(r2.reviewPack("s").warnings.some((w: string) => /evidence .*not (for|current)/i.test(w) || /no check evidence/i.test(w)));
+});
+
+test("waiting sessions whose change already reached trunk are closed; queue risk is refreshed", () => {
+  const r = mk({ "f.js": "a\nb\nc\n", "README.md": "# t\n" });
+  r.setConfig({ policy: { autoLandBelow: 0 } });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "f.js", "a\nB\nc\n");
+  r.write("b", "f.js", "a\nB\nc\n"); // bruno's change is identical to alice's
+  r.submit("a");
+  r.submit("b");
+  assert.equal(r.reviewQueue("human").next.length, 2);
+  r.review("a", "rev", true); // alice lands; bruno's change is now already on trunk
+  assert.equal(r.session("b").status, "landed", "an identical change needs no review");
+  assert.equal(r.reviewQueue("human").next.length, 0);
+});
