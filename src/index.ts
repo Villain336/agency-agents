@@ -265,7 +265,7 @@ async function handleRepos(req: Request, env: Env, parts: string[]): Promise<Res
   const from = body.from ? String(body.from) : undefined;
   if (!open) {
     // creating from scratch needs the root token; forking needs read access to the source
-    const actor = await authenticate(req, env, from ?? newName);
+    const actor = await authenticate(req, env, from ?? new URL(req.url).searchParams.get("repo") ?? "default");
     if (!actor) return json({ error: "authentication required" }, 401, { "www-authenticate": "Bearer" });
     isRoot = actor.id === "root";
     creator = actor.name;
