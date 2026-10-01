@@ -45,21 +45,22 @@ await scene("problem", 13, [[1, "Plain git: every rejected push means a rebase a
 // the swarm, replayed from the real audit log of 16 Claude agents
 await page.goto(`${base}/dashboard.html?replay=/data/events.json&speed=${speed}&maxgap=3&repo=swarm`);
 await wait(2);
-await caption("16 real Claude agents, one repo, no branches. Every agent edits the same exports line.");
-await wait(7);
-await caption("Conflicts are surfaced as data, and each agent re-applies its change on the new trunk");
+await caption("16 real Claude agents add 16 functions to one library at the same time. No branches, no PRs.");
+await wait(8);
+await caption("Every agent must edit the same exports line and append to the same test file");
 await wait(12);
-await caption("A change that would conflict with one already queued is parked instead of wasting a test run");
-await wait(12);
-await caption("Protected paths and risky diffs go to reviewer agents; low-risk changes land on test evidence");
+await caption("Weave merges list items and appended blocks itself, and records each auto-merge");
+await wait(14);
+await caption("Required tests run on the exact merged code; README is protected, so reviewer agents look at it");
 await wait(14);
 await caption(null);
 const t0 = Date.now();
 while (!(await page.evaluate(() => (window as any).REPLAY_DONE)) && Date.now() - t0 < 60000) await wait(1);
-await caption("Every change landed through the same trunk, and the final tests pass");
+await caption("All 16 landed. The final trunk passes 34 of 34 tests.");
 await wait(4);
 await caption(null);
 
+await scene("journey", 15, [[1, "Run 1 found silent data loss, and the first fix made conflicts worse"], [8, "Run 3 added list and union merging: 2 conflicts instead of 37, all 16 landed"]]);
 await scene("bench", 14, [[1, "Same workload and build capacity, 20 to 200 agents: Weave matches a merge queue"], [8, "Both are far cheaper than plain push-and-retry. Baselines use real git merges"]]);
 await scene("trust", 11, [[1, "Signed provenance: which agent and model, risk, evidence, approvals, in a hash chain"]]);
 await scene("review", 12, [[1, "Reviewer agents read the diff, not just the checks"]]);

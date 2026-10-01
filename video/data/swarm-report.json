@@ -1,0 +1,328 @@
+{
+  "repo": "swarm3",
+  "generatedAt": "2026-10-01T19:31:23.349Z",
+  "agents": 16,
+  "developers": 16,
+  "trunkRev": 18,
+  "landedChanges": 17,
+  "totals": {
+    "conflicts": 2,
+    "resolves": 2,
+    "ciRuns": 26,
+    "failedChecks": 0,
+    "parked": 3,
+    "reviews": 4,
+    "approvals": 3,
+    "rejections": 1
+  },
+  "timeToLandSec": {
+    "first": 56,
+    "p50": 60,
+    "p90": 80,
+    "last": 81
+  },
+  "integrity": {
+    "developersAsked": 16,
+    "functionsOnTrunk": 16,
+    "lostAfterLanding": [],
+    "neverLanded": []
+  },
+  "finalTrunk": {
+    "files": [
+      "README.md",
+      "lib.js",
+      "lib.test.js"
+    ],
+    "testsRun": 34,
+    "testsPassed": 34,
+    "testsFailed": 0,
+    "exportedFunctions": 18,
+    "exported": [
+      "sum",
+      "last",
+      "truncate",
+      "capitalize",
+      "omit",
+      "average",
+      "countBy",
+      "partition",
+      "pick",
+      "flatten",
+      "groupBy",
+      "median",
+      "zip",
+      "range",
+      "clamp",
+      "unique",
+      "chunk",
+      "slugify"
+    ]
+  },
+  "provenanceSample": {
+    "rev": 17,
+    "record": {
+      "semantic": [],
+      "evidence": [
+        {
+          "check": "unit",
+          "passed": true,
+          "jobId": "j22",
+          "rev": 16
+        }
+      ],
+      "approvals": [],
+      "goal": "slugify code",
+      "actor": {
+        "id": "id1",
+        "name": "ada",
+        "kind": "agent"
+      },
+      "baseRev": 13,
+      "risk": {
+        "score": 20,
+        "tier": "low",
+        "reasons": [
+          "+1 14 changed lines",
+          "+4 2 files",
+          "+5 auto-merged with concurrent changes",
+          "+10 auto-merged 2 overlapping edit(s) (list items / appended blocks)"
+        ]
+      },
+      "autoResolved": [
+        {
+          "path": "lib.js",
+          "count": 1
+        },
+        {
+          "path": "lib.test.js",
+          "count": 1
+        }
+      ],
+      "rev": 17,
+      "sessionId": "ada-2",
+      "paths": [
+        "lib.js",
+        "lib.test.js"
+      ],
+      "merged": true,
+      "ts": 1790883024674,
+      "prevHash": "8b071fcde8b4ad723820a15e1ac070d197a17ca7f0648d1618005919a506fade"
+    },
+    "hashPrefix": "1e0a63081fcfcc52",
+    "signaturePrefix": "ee586b163cff7656"
+  },
+  "chain": {
+    "ok": true,
+    "checked": 18
+  },
+  "perAgent": [
+    {
+      "agent": "ada",
+      "opened": 1790882993799,
+      "firstLanded": 1790883024674,
+      "conflicts": 1,
+      "resolves": 1,
+      "checkRuns": 4,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 3,
+      "landedChanges": 1,
+      "secondsToLand": 81
+    },
+    {
+      "agent": "ben",
+      "opened": 1790882995488,
+      "firstLanded": 1790883022476,
+      "conflicts": 1,
+      "resolves": 1,
+      "checkRuns": 5,
+      "failedChecks": 0,
+      "parked": 2,
+      "reviews": 4,
+      "landedChanges": 2,
+      "secondsToLand": 78
+    },
+    {
+      "agent": "cai",
+      "opened": 1790882995990,
+      "firstLanded": 1790883023900,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 3,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 1,
+      "landedChanges": 1,
+      "secondsToLand": 80
+    },
+    {
+      "agent": "dev",
+      "opened": 1790882996044,
+      "firstLanded": 1790883023430,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 2,
+      "failedChecks": 0,
+      "parked": 1,
+      "reviews": 1,
+      "landedChanges": 1,
+      "secondsToLand": 79
+    },
+    {
+      "agent": "eli",
+      "opened": 1790882994606,
+      "firstLanded": 1790883004228,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 60
+    },
+    {
+      "agent": "fay",
+      "opened": 1790882995668,
+      "firstLanded": 1790883004333,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 60
+    },
+    {
+      "agent": "gus",
+      "opened": 1790882992612,
+      "firstLanded": 1790883000358,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 56
+    },
+    {
+      "agent": "hui",
+      "opened": 1790882992359,
+      "firstLanded": 1790883000325,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 56
+    },
+    {
+      "agent": "ivy",
+      "opened": 1790882993666,
+      "firstLanded": 1790883002378,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 58
+    },
+    {
+      "agent": "jon",
+      "opened": 1790882994791,
+      "firstLanded": 1790883005413,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 61
+    },
+    {
+      "agent": "kim",
+      "opened": 1790882994511,
+      "firstLanded": 1790883005773,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 62
+    },
+    {
+      "agent": "leo",
+      "opened": 1790882995157,
+      "firstLanded": 1790883005601,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 62
+    },
+    {
+      "agent": "mia",
+      "opened": 1790882994085,
+      "firstLanded": 1790883004037,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 60
+    },
+    {
+      "agent": "ned",
+      "opened": 1790882992809,
+      "firstLanded": 1790883002093,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 58
+    },
+    {
+      "agent": "oli",
+      "opened": 1790882995606,
+      "firstLanded": 1790883003790,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 60
+    },
+    {
+      "agent": "pia",
+      "opened": 1790882995241,
+      "firstLanded": 1790883003789,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 60
+    }
+  ]
+}

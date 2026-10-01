@@ -31,6 +31,16 @@ const S={
    const max=Math.max(P.ciRuns,Q.ciRuns,W.ciRuns); const bar=(x,c,label)=>`<div class="bar" style="width:${Math.max(6,100*x.ciRuns/max)}%;background:${c}">${label}: ${fmt(x.ciRuns)} test runs</div>`;
    $('#stage').innerHTML=`<div class="fade"><h2>Git's workflow breaks at agent scale</h2><p class="sub">${r.agents} agents land one change each in a hot repo. Same workload, same build capacity:</p><div style="margin-top:34px">${bar(P,'var(--bad)','push, rebase, retry (plain git)')}${bar(Q,'var(--cool)','merge queue, 5 builds at once')}${bar(W,'var(--ok)','Weave')}</div><div class="lab"><span>real git merges; Weave runs its real code; time is simulated (CI = 60s)</span><span>lower is better</span></div></div>`},
  async swarm(){ $('#stage').innerHTML=''},
+ async journey(){ const rs=await Promise.all(['run1','run2','run3'].map(r=>J('/data/'+r+'/swarm-report.json')));
+   const cell=(f,cls)=>rs.map((d,i)=>`<td class="${cls?cls(d,i):''}">${f(d)}</td>`).join('');
+   $('#stage').innerHTML=`<div class="fade"><h2>Same task, three runs: what the swarm taught us</h2><table><tr><th></th><th>run 1</th><th>run 2</th><th>run 3</th></tr>
+   <tr><td>functions on trunk (of 16)</td>${cell(d=>d.integrity.functionsOnTrunk,(d)=>d.integrity.functionsOnTrunk===16?'ok':'warn')}</tr>
+   <tr><td>landed, then silently erased</td>${cell(d=>d.integrity.lostAfterLanding.length,(d)=>d.integrity.lostAfterLanding.length?'bad':'ok')}</tr>
+   <tr><td>conflicts reported</td>${cell(d=>d.totals.conflicts,(d)=>d.totals.conflicts<10?'ok':'bad')}</tr>
+   <tr><td>agent resolve rounds</td>${cell(d=>d.totals.resolves,(d)=>d.totals.resolves<10?'ok':'bad')}</tr>
+   <tr><td>final tests passing</td>${cell(d=>d.finalTrunk.testsPassed+' / '+d.finalTrunk.testsRun)}</tr>
+   <tr><td>time to land everything</td>${cell(d=>d.timeToLandSec.last+' s')}</tr></table>
+   <p class="sub" style="margin-top:20px;font-size:20px">Run 1 exposed silent data loss. Run 2's fix traded it for churn. Run 3 added list and union merging, and a guard against duplicate declarations. One sample each; run 3 changed several things at once.</p></div>`},
  async bench(){ const b=await J('/data/bench.json'); const rows=b.rows.filter(r=>r.skew===1&&r.concurrency===5);
    const body=rows.map(r=>{const Q=r.results.find(x=>x.policy.startsWith('queue')),W=r.results.find(x=>x.policy.startsWith('weave')),P=r.results.find(x=>x.policy==='push-race');return `<tr><td>${r.agents}</td><td class="bad">${P?fmt(P.makespanSec)+'s':'n/a'}</td><td class="cool">${fmt(Q.makespanSec)}s</td><td class="ok">${fmt(W.makespanSec)}s</td><td>${P?fmt(P.ciRuns):'n/a'}</td><td>${Q.ciRuns}</td><td>${W.ciRuns}</td></tr>`}).join('');
    $('#stage').innerHTML=`<div class="fade"><h2>Weave matches a merge queue, without branches or PRs</h2><table><tr><th>agents</th><th>push-race time</th><th>queue time</th><th>Weave time</th><th>push-race CI</th><th>queue CI</th><th>Weave CI</th></tr>${body}</table><p class="sub" style="margin-top:22px;font-size:20px">Hot-spot workload, 5 builds in parallel. Baselines use real <code>git merge-file</code>. Parity with a queue is the honest result; the push-race column is what agents do today.</p></div>`},

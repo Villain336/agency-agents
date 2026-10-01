@@ -1,0 +1,20 @@
+$ git clone http://gitdemo:<token>@localhost:8789/git/swarm3
+(cloned)
+$ git log --oneline | head -8
+0b983dd add clamp README bullet
+552c0a2 slugify code
+dc1d3b4 add chunk(xs,size) and README bullet
+d6448cf add unique(xs) and README bullet
+e1ac848 add clamp
+b53ca9a add range
+25f1f60 add zip(a, b)
+368ca82 add median
+$ git log -1 --format=%B   # the last landed change, with Weave's trailers
+ben: add clamp README bullet
+
+Weave-Session: ben-2
+Weave-Rev: r18
+$ git fsck --strict
+(clean)
+$ grep -c "^test(" lib.test.js
+34

@@ -1,0 +1,1 @@
+[{"by":"rev2","agent":"ada","note":"slugify already exists on trunk (lib.js ~line 110, with identical tests); this adds a duplicate definition and duplicate tests. Rebase and drop the lib/test changes; only the README bullet is needed."}]

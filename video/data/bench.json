@@ -1,0 +1,1090 @@
+{
+  "generatedAt": "2026-10-01T19:15:30.294Z",
+  "params": {
+    "ciSec": 60,
+    "reworkSec": 15,
+    "verifySec": 10,
+    "note": "virtual time; build concurrency C is the queue batch size and the number of Weave runners"
+  },
+  "rows": [
+    {
+      "agents": 20,
+      "skew": 0,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1270,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 700,
+          "p95Sec": 1270
+        },
+        {
+          "policy": "queue(C=1)",
+          "agents": 20,
+          "makespanSec": 1208,
+          "ciRuns": 20,
+          "retries": 3,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 668,
+          "p95Sec": 1208
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 20,
+          "makespanSec": 1208,
+          "ciRuns": 20,
+          "retries": 3,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 668,
+          "p95Sec": 1208
+        }
+      ]
+    },
+    {
+      "agents": 20,
+      "skew": 0,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1270,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 700,
+          "p95Sec": 1270
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 20,
+          "makespanSec": 368,
+          "ciRuns": 20,
+          "retries": 4,
+          "conflicts": 4,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 368
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 20,
+          "makespanSec": 270,
+          "ciRuns": 20,
+          "retries": 3,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 270
+        }
+      ]
+    },
+    {
+      "agents": 20,
+      "skew": 0,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1270,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 700,
+          "p95Sec": 1270
+        },
+        {
+          "policy": "queue(C=20)",
+          "agents": 20,
+          "makespanSec": 263,
+          "ciRuns": 20,
+          "retries": 6,
+          "conflicts": 6,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 128,
+          "p95Sec": 263
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 20,
+          "makespanSec": 174,
+          "ciRuns": 20,
+          "retries": 3,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 100,
+          "p95Sec": 174
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 0,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3073,
+          "ciRuns": 1274,
+          "retries": 1224,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1595,
+          "p95Sec": 2949
+        },
+        {
+          "policy": "queue(C=1)",
+          "agents": 50,
+          "makespanSec": 3006,
+          "ciRuns": 50,
+          "retries": 11,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1566,
+          "p95Sec": 2886
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 50,
+          "makespanSec": 3021,
+          "ciRuns": 50,
+          "retries": 11,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1566,
+          "p95Sec": 2886
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 0,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3073,
+          "ciRuns": 1274,
+          "retries": 1224,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1595,
+          "p95Sec": 2949
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 50,
+          "makespanSec": 801,
+          "ciRuns": 50,
+          "retries": 14,
+          "conflicts": 14,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 726
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 50,
+          "makespanSec": 706,
+          "ciRuns": 50,
+          "retries": 11,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 624
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 0,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3073,
+          "ciRuns": 1274,
+          "retries": 1224,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1595,
+          "p95Sec": 2949
+        },
+        {
+          "policy": "queue(C=20)",
+          "agents": 50,
+          "makespanSec": 501,
+          "ciRuns": 50,
+          "retries": 18,
+          "conflicts": 18,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 186,
+          "p95Sec": 366
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 50,
+          "makespanSec": 346,
+          "ciRuns": 50,
+          "retries": 11,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 137,
+          "p95Sec": 264
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "skew": 0,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 100,
+          "makespanSec": 6141,
+          "ciRuns": 5046,
+          "retries": 4946,
+          "conflicts": 72,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3097,
+          "p95Sec": 5878
+        },
+        {
+          "policy": "queue(C=1)",
+          "agents": 100,
+          "makespanSec": 6006,
+          "ciRuns": 100,
+          "retries": 71,
+          "conflicts": 71,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3066,
+          "p95Sec": 5766
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 100,
+          "makespanSec": 6006,
+          "ciRuns": 100,
+          "retries": 71,
+          "conflicts": 71,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3066,
+          "p95Sec": 5766
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "skew": 0,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 100,
+          "makespanSec": 6141,
+          "ciRuns": 5046,
+          "retries": 4946,
+          "conflicts": 72,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3097,
+          "p95Sec": 5878
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 100,
+          "makespanSec": 1566,
+          "ciRuns": 100,
+          "retries": 98,
+          "conflicts": 98,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 666,
+          "p95Sec": 1386
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 100,
+          "makespanSec": 1329,
+          "ciRuns": 100,
+          "retries": 71,
+          "conflicts": 71,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 666,
+          "p95Sec": 1237
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "skew": 0,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 100,
+          "makespanSec": 6141,
+          "ciRuns": 5046,
+          "retries": 4946,
+          "conflicts": 72,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3097,
+          "p95Sec": 5878
+        },
+        {
+          "policy": "queue(C=20)",
+          "agents": 100,
+          "makespanSec": 876,
+          "ciRuns": 100,
+          "retries": 110,
+          "conflicts": 110,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 246,
+          "p95Sec": 681
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 100,
+          "makespanSec": 632,
+          "ciRuns": 100,
+          "retries": 71,
+          "conflicts": 71,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 195,
+          "p95Sec": 484
+        }
+      ]
+    },
+    {
+      "agents": 200,
+      "skew": 0,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "queue(C=1)",
+          "agents": 200,
+          "makespanSec": 12035,
+          "ciRuns": 200,
+          "retries": 306,
+          "conflicts": 306,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 6065,
+          "p95Sec": 11465
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 200,
+          "makespanSec": 12035,
+          "ciRuns": 200,
+          "retries": 310,
+          "conflicts": 310,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 6065,
+          "p95Sec": 11465
+        }
+      ]
+    },
+    {
+      "agents": 200,
+      "skew": 0,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "queue(C=5)",
+          "agents": 200,
+          "makespanSec": 2795,
+          "ciRuns": 200,
+          "retries": 419,
+          "conflicts": 419,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 1265,
+          "p95Sec": 2465
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 200,
+          "makespanSec": 2600,
+          "ciRuns": 200,
+          "retries": 308,
+          "conflicts": 308,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 1265,
+          "p95Sec": 2345
+        }
+      ]
+    },
+    {
+      "agents": 200,
+      "skew": 0,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "queue(C=20)",
+          "agents": 200,
+          "makespanSec": 1535,
+          "ciRuns": 200,
+          "retries": 517,
+          "conflicts": 517,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 365,
+          "p95Sec": 1205
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 200,
+          "makespanSec": 1175,
+          "ciRuns": 200,
+          "retries": 306,
+          "conflicts": 306,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 365,
+          "p95Sec": 878
+        }
+      ]
+    },
+    {
+      "agents": 20,
+      "skew": 1,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1330,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 705,
+          "p95Sec": 1330
+        },
+        {
+          "policy": "queue(C=1)",
+          "agents": 20,
+          "makespanSec": 1268,
+          "ciRuns": 20,
+          "retries": 16,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 668,
+          "p95Sec": 1268
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 20,
+          "makespanSec": 1253,
+          "ciRuns": 20,
+          "retries": 16,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 668,
+          "p95Sec": 1253
+        }
+      ]
+    },
+    {
+      "agents": 20,
+      "skew": 1,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1330,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 705,
+          "p95Sec": 1330
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 20,
+          "makespanSec": 593,
+          "ciRuns": 20,
+          "retries": 22,
+          "conflicts": 22,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 593
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 20,
+          "makespanSec": 508,
+          "ciRuns": 20,
+          "retries": 16,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 508
+        }
+      ]
+    },
+    {
+      "agents": 20,
+      "skew": 1,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1330,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 705,
+          "p95Sec": 1330
+        },
+        {
+          "policy": "queue(C=20)",
+          "agents": 20,
+          "makespanSec": 563,
+          "ciRuns": 20,
+          "retries": 26,
+          "conflicts": 26,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 128,
+          "p95Sec": 563
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 20,
+          "makespanSec": 459,
+          "ciRuns": 20,
+          "retries": 16,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 107,
+          "p95Sec": 459
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 1,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3109,
+          "ciRuns": 1266,
+          "retries": 1216,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1599,
+          "p95Sec": 2954
+        },
+        {
+          "policy": "queue(C=1)",
+          "agents": 50,
+          "makespanSec": 3111,
+          "ciRuns": 50,
+          "retries": 48,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1566,
+          "p95Sec": 2961
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 50,
+          "makespanSec": 3111,
+          "ciRuns": 50,
+          "retries": 48,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1566,
+          "p95Sec": 2961
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 1,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3109,
+          "ciRuns": 1266,
+          "retries": 1216,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1599,
+          "p95Sec": 2954
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 50,
+          "makespanSec": 1191,
+          "ciRuns": 50,
+          "retries": 60,
+          "conflicts": 60,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 1041
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 50,
+          "makespanSec": 1089,
+          "ciRuns": 50,
+          "retries": 48,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 939
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 1,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3109,
+          "ciRuns": 1266,
+          "retries": 1216,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1599,
+          "p95Sec": 2954
+        },
+        {
+          "policy": "queue(C=20)",
+          "agents": 50,
+          "makespanSec": 831,
+          "ciRuns": 50,
+          "retries": 60,
+          "conflicts": 60,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 186,
+          "p95Sec": 681
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 50,
+          "makespanSec": 755,
+          "ciRuns": 50,
+          "retries": 48,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 137,
+          "p95Sec": 605
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "skew": 1,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 100,
+          "makespanSec": 6239,
+          "ciRuns": 5034,
+          "retries": 4934,
+          "conflicts": 173,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3100,
+          "p95Sec": 5927
+        },
+        {
+          "policy": "queue(C=1)",
+          "agents": 100,
+          "makespanSec": 6171,
+          "ciRuns": 100,
+          "retries": 172,
+          "conflicts": 172,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3066,
+          "p95Sec": 5871
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 100,
+          "makespanSec": 6171,
+          "ciRuns": 100,
+          "retries": 173,
+          "conflicts": 173,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3066,
+          "p95Sec": 5871
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "skew": 1,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 100,
+          "makespanSec": 6239,
+          "ciRuns": 5034,
+          "retries": 4934,
+          "conflicts": 173,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3100,
+          "p95Sec": 5927
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 100,
+          "makespanSec": 2166,
+          "ciRuns": 100,
+          "retries": 210,
+          "conflicts": 210,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 666,
+          "p95Sec": 1866
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 100,
+          "makespanSec": 2018,
+          "ciRuns": 100,
+          "retries": 173,
+          "conflicts": 173,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 666,
+          "p95Sec": 1718
+        }
+      ]
+    },
+    {
+      "agents": 100,
+      "skew": 1,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 100,
+          "makespanSec": 6239,
+          "ciRuns": 5034,
+          "retries": 4934,
+          "conflicts": 173,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 3100,
+          "p95Sec": 5927
+        },
+        {
+          "policy": "queue(C=20)",
+          "agents": 100,
+          "makespanSec": 1581,
+          "ciRuns": 100,
+          "retries": 243,
+          "conflicts": 243,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 246,
+          "p95Sec": 1281
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 100,
+          "makespanSec": 1373,
+          "ciRuns": 100,
+          "retries": 172,
+          "conflicts": 172,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 100,
+          "p50Sec": 197,
+          "p95Sec": 1073
+        }
+      ]
+    },
+    {
+      "agents": 200,
+      "skew": 1,
+      "concurrency": 1,
+      "results": [
+        {
+          "policy": "queue(C=1)",
+          "agents": 200,
+          "makespanSec": 12200,
+          "ciRuns": 200,
+          "retries": 580,
+          "conflicts": 580,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 6065,
+          "p95Sec": 11525
+        },
+        {
+          "policy": "weave(train,R=1)",
+          "agents": 200,
+          "makespanSec": 12185,
+          "ciRuns": 200,
+          "retries": 583,
+          "conflicts": 583,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 6065,
+          "p95Sec": 11510
+        }
+      ]
+    },
+    {
+      "agents": 200,
+      "skew": 1,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "queue(C=5)",
+          "agents": 200,
+          "makespanSec": 3980,
+          "ciRuns": 200,
+          "retries": 816,
+          "conflicts": 816,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 1265,
+          "p95Sec": 3305
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 200,
+          "makespanSec": 3575,
+          "ciRuns": 200,
+          "retries": 583,
+          "conflicts": 583,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 1265,
+          "p95Sec": 2900
+        }
+      ]
+    },
+    {
+      "agents": 200,
+      "skew": 1,
+      "concurrency": 20,
+      "results": [
+        {
+          "policy": "queue(C=20)",
+          "agents": 200,
+          "makespanSec": 2840,
+          "ciRuns": 200,
+          "retries": 968,
+          "conflicts": 968,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 365,
+          "p95Sec": 2165
+        },
+        {
+          "policy": "weave(train,R=20)",
+          "agents": 200,
+          "makespanSec": 2243,
+          "ciRuns": 200,
+          "retries": 580,
+          "conflicts": 580,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 200,
+          "p50Sec": 365,
+          "p95Sec": 1568
+        }
+      ]
+    }
+  ],
+  "detector": [
+    {
+      "category": "signature change vs new caller",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 200,
+      "rate": 1
+    },
+    {
+      "category": "body change vs existing caller edited",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 200,
+      "rate": 1
+    },
+    {
+      "category": "same function, different lines",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 200,
+      "rate": 1
+    },
+    {
+      "category": "transitive dependency (known miss)",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 0,
+      "rate": 0
+    },
+    {
+      "category": "independent changes (false positives)",
+      "shouldFlag": false,
+      "cases": 200,
+      "flagged": 0,
+      "rate": 0
+    },
+    {
+      "category": "independent edits to two functions (false positives)",
+      "shouldFlag": false,
+      "cases": 200,
+      "flagged": 0,
+      "rate": 0
+    }
+  ],
+  "mergeAgreement": {
+    "cases": 3000,
+    "bothClean": 2147,
+    "bothConflict": 824,
+    "weaveCleanGitConflict": 22,
+    "weaveConflictGitClean": 7,
+    "cleanDiffer": 1,
+    "agreement": 0.99
+  }
+}
