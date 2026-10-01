@@ -102,8 +102,8 @@ test("clean merge touching the same function in different lines needs verificati
   assert.equal(res.status, "needs_verify");
   assert.equal(res.risks![0].kind, "same-symbol");
   assert.equal(r.preview("b").files["items.ts"]!.includes("limit = 50"), true);
-  r.verify("b", "TestBot", true);
-  assert.equal(r.session("b").status, "landed");
+  assert.equal(r.verify("b", "TestBot", true).status, "in_review"); // verified, but a medium-risk change still needs a reviewer
+  assert.equal(r.review("b", "ReviewBot", true).status, "landed");
 });
 
 test("dependency interaction across different functions is flagged", () => {

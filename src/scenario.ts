@@ -41,6 +41,7 @@ export const SCENARIO: Step[] = [
   { op: "note", text: "PageBot changed listItems' signature; PerfBot changed its body. The text merges cleanly, but Weave sees both touched one function and holds it for a verifier." },
   { op: "submit", id: "page" },
   { op: "verify", id: "page", verifier: "TestBot", passed: true },
+  { op: "review", id: "page", reviewer: "ReviewBot", approve: true },
   { op: "note", text: "AuthBot touched a protected path, so it waits for a reviewer agent." },
   { op: "submit", id: "auth" },
   { op: "review", id: "auth", reviewer: "ReviewBot", approve: true },
