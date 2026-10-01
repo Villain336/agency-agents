@@ -1021,7 +1021,10 @@ export class Repo {
   review(id: string, reviewer: string | { name: string; kind?: Kind | "unknown" }, approve: boolean, note = "") {
     const who = typeof reviewer === "string" ? { name: reviewer, kind: "unknown" as const } : { name: reviewer.name, kind: reviewer.kind ?? "unknown" };
     const s = this.session(id);
-    if (s.status !== "in_review") throw new WeaveError(`session ${id} is not awaiting review`, 409);
+    if (s.status !== "in_review") {
+      const last = s.feedback?.at(-1);
+      throw new WeaveError(`session ${id} is not awaiting review: it is ${s.status}${s.status === "landed" ? ` (r${s.landedRev})` : ""}${last ? `; last feedback from ${last.by}: ${last.note.slice(0, 120)}` : ""}`, 409);
+    }
     if (who.name === s.agent) throw new WeaveError("an agent cannot review its own change", 403);
     if (!approve) {
       s.status = "rejected";

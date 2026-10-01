@@ -45,7 +45,7 @@ try {
     case "resolve": { const [id, path, file] = a; await w.resolveWith(id, path, readFileSync(file, "utf8"), revs[path]); print("resolved " + path + "; now run: submit " + id); break; }
     case "wait": { const id = a[0]; const t0 = Date.now(); const max = Number(a[1] ?? 180) * 1000; for (;;) { const s: any = await w.session(id); if (["landed", "rejected", "conflicted", "active", "in_review", "needs_verify"].includes(s.status) || Date.now() - t0 > max) { print({ status: s.status, blockedOn: s.blockedOn, landedRev: s.landedRev }); break; } await new Promise((r) => setTimeout(r, 1500)); } break; }
     case "queue": print(await w.reviewQueue()); break;
-    case "pack": { const p: any = await w.reviewPack(a[0]); print({ goal: p.goal, agent: p.agent, risk: p.risk, stats: p.stats, evidence: p.evidence, semantic: p.semantic, comments: p.comments }); for (const f of p.files) print(f.patch); break; }
+    case "pack": { const p: any = await w.reviewPack(a[0]); if (p.warnings?.length) print("WARNINGS (read these first):\n- " + p.warnings.join("\n- ")); print({ goal: p.goal, agent: p.agent, status: p.status, risk: p.risk, stats: p.stats, behindBy: p.behindBy, evidence: p.evidence, comments: p.comments }); for (const f of p.files) print(f.patch); break; }
     case "review": { const r = await w.review(a[0], a[1] === "approve", a[2]); print({ status: r.status }); break; }
     case "comment": { await w.comment(a[0], { path: a[1], line: Number(a[2]), body: a[3] }); print("ok"); break; }
     case "history": print(await w.history(Number(a[0] ?? 20))); break;
