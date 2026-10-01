@@ -10,7 +10,9 @@
     "test": "node --test \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "demo": "node scripts/demo.ts",
-    "e2e": "node test-e2e/e2e.ts"
+    "e2e": "node test-e2e/e2e.ts",
+    "ui:mock": "node test-ui/mock-server.ts",
+    "ui:shots": "node test-ui/shots.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",

@@ -1,7 +1,7 @@
 // Hash router (pure parsing/building; the DOM glue lives in app.js).
 // Hash shape:  #/<route>/<arg...>[?query][#fragment]   e.g.  #/blob/src/a.ts?rev=4#L12
 
-const SIMPLE = ["changes", "tasks", "commits", "search", "activity", "releases", "notifications", "settings", "repos"];
+const SIMPLE = ["changes", "tasks", "commits", "search", "activity", "releases", "notifications", "settings", "repos", "runs", "packages"];
 const safeDecode = (s) => {
   try {
     return decodeURIComponent(s);
@@ -33,6 +33,8 @@ export function parseHash(hash) {
   if (head === "tree" || head === "blob") return { ...base, name: head, params: { path: rest.join("/") } };
   if (head === "commit" && rest.length) return { ...base, name: "commit", params: { rev: rest[0] } };
   if (head === "change" && rest.length) return { ...base, name: "change", params: { id: rest.join("/") } };
+  if (head === "run" && rest.length) return { ...base, name: "run", params: { id: rest[0] } };
+  if (head === "package" && rest.length) return { ...base, name: "package", params: { name: rest.join("/") } };
   if (head === "task" && rest.length) return { ...base, name: "task", params: { n: rest[0] } };
   if (SIMPLE.includes(head) && !rest.length) return { ...base, name: head };
   return { ...base, name: "notfound", params: { path: segs.join("/") } };
@@ -47,6 +49,8 @@ export function buildHash(name, params = {}, query = {}, frag = "") {
     case "blob": p = "/blob/" + enc(params.path ?? ""); break;
     case "commit": p = "/commit/" + encodeURIComponent(params.rev); break;
     case "change": p = "/change/" + enc(params.id); break;
+    case "run": p = "/run/" + encodeURIComponent(params.id); break;
+    case "package": p = "/package/" + enc(params.name); break;
     case "task": p = "/task/" + encodeURIComponent(params.n); break;
     default: p = "/" + name;
   }
@@ -61,4 +65,4 @@ export function parseLineFrag(frag) {
 }
 
 /** Top-level nav section a route belongs to (for aria-current). */
-export const sectionOf = (name) => ({ home: "code", tree: "code", blob: "code", commit: "commits", commits: "commits", change: "changes", task: "tasks" })[name] ?? name;
+export const sectionOf = (name) => ({ home: "code", tree: "code", blob: "code", commit: "commits", commits: "commits", change: "changes", task: "tasks", run: "runs", package: "packages" })[name] ?? name;
