@@ -438,15 +438,17 @@ export class Repo {
     if (s.actorId && s.actorId !== actor.id) throw new WeaveError(`session ${s.id} belongs to ${s.agent}`, 403);
   }
 
-  open(opts: { id?: string; agent: string; goal: string; intent?: string[]; actor?: Actor; model?: string; prompt?: string }): { session: Session; warnings: string[] } {
+  open(opts: { id?: string; agent: string; goal: string; intent?: string[]; actor?: Actor; model?: string; prompt?: string; baseRev?: number }): { session: Session; warnings: string[] } {
     this.checkBudget(opts.actor, "open");
+    if (opts.baseRev !== undefined && (!Number.isInteger(opts.baseRev) || opts.baseRev < 0 || opts.baseRev > this.s.rev))
+      throw new WeaveError(`baseRev must be an integer between 0 and the current revision (r${this.s.rev})`);
     const id = opts.id ?? `${opts.agent}-${Object.keys(this.s.sessions).length + 1}`;
     const existing = this.s.sessions[id];
     if (existing && LIVE.includes(existing.status)) throw new WeaveError(`session ${id} is still ${existing.status}`, 409);
     const ident = this.identityOf(opts.actor?.id);
     const session: Session = {
       id, agent: opts.agent, actorId: opts.actor && !opts.actor.open ? opts.actor.id : undefined, model: opts.model ?? ident?.model,
-      promptHash: opts.prompt ? sha256(opts.prompt) : undefined, goal: opts.goal, baseRev: this.s.rev, edits: {}, pathBase: {},
+      promptHash: opts.prompt ? sha256(opts.prompt) : undefined, goal: opts.goal, baseRev: opts.baseRev ?? this.s.rev, edits: {}, pathBase: {},
       intent: [], status: "active", conflicts: [], risks: [], approvals: [], evidence: [], previews: [], createdAt: this.now(),
     };
     this.s.sessions[id] = session;
@@ -485,9 +487,19 @@ export class Repo {
       throw new WeaveError(`${actor.name} may not write ${path} (allowed: ${actor.paths.join(", ")})`, 403);
   }
 
-  write(id: string, path: string, content: string | null, actor?: Actor) {
+  /**
+   * `basedOn` is the trunk revision the agent read the file at. If the file changed between that
+   * revision and the session's base, the edit was derived from stale content and would silently
+   * revert the intervening change, so it is rejected.
+   */
+  write(id: string, path: string, content: string | null, actor?: Actor, basedOn?: number) {
     const s = this.session(id);
     this.assertOwner(s, actor);
+    const base = s.pathBase[path] ?? s.baseRev;
+    if (basedOn !== undefined && basedOn < base && this.fileAt(path, basedOn) !== this.fileAt(path, base)) {
+      const rev = this.s.files[path]?.find((v) => v.rev > basedOn && v.rev <= base)?.rev ?? base;
+      throw new WeaveError(`you read r${basedOn} of ${path}, but it changed in r${rev} (your session is based on r${base}); re-read it with the session file endpoint (or open the session with baseRev=${basedOn}) and redo your edit`, 409);
+    }
     if (s.status === "landed" || s.status === "rejected") throw new WeaveError(`session ${id} is ${s.status}`, 409);
     if (s.status === "conflicted") throw new WeaveError(`session ${id} has unresolved conflicts; resolve them first`, 409);
     this.assertWritable(path, actor);
@@ -758,7 +770,7 @@ export class Repo {
     const s = this.session(id);
     this.assertOwner(s, actor);
     const c = s.conflicts.find((x) => x.path === path);
-    if (!c) throw new WeaveError(`no conflict on ${path}`, 404);
+    if (!c) throw new WeaveError(`no known conflict on ${path}; submit the session first to detect conflicts against the current trunk`, 404);
     const n = c.segments.filter((x) => x.kind === "conflict").length;
     const choices = typeof how === "string" ? Array<Choice>(n).fill(how) : how;
     if (c.kind !== "text") {
@@ -863,7 +875,13 @@ export class Repo {
     return {
       id: s.id, agent: s.agent, goal: s.goal, status: s.status, model: s.model, baseRev: s.baseRev, headRev: this.s.rev,
       risk, need: risk?.need, approvals: s.approvals, semantic: r.risks, conflicts: r.conflicts.map((c) => ({ path: c.path, kind: c.kind })),
-      evidence: s.evidence.map((e) => ({ check: e.check, passed: e.passed, rev: e.rev, runner: e.runner })), previews: s.previews,
+      evidence: s.evidence.map((e) => {
+        const job = this.s.jobs[e.jobId];
+        // evidence only counts if it was produced for exactly these edits and has not gone stale
+        const current = !!job && job.editHash === this.editHash(s) && (job.status === "failed" || this.jobState(job, s) === "pass");
+        return { check: e.check, passed: e.passed, rev: e.rev, runner: e.runner, current };
+      }),
+      previews: s.previews,
       stats: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) },
       files, comments: this.comments(id),
     };

@@ -42,6 +42,12 @@ export interface RiskInput {
 const SENSITIVE = /(^|\/)(auth|authn|authz|secrets?|crypto|security|payments?|billing|iam|permissions?|infra|terraform|deploy|migrations?|wrangler\.(toml|jsonc?)|dockerfile|package(-lock)?\.json|\.env[^/]*)(\.|\/|$)|\.github\/workflows\//i;
 const TESTISH = /(^|\/)(tests?|__tests__|spec)(\/|$)|\.(test|spec)\.[a-z]+$|_test\.(go|py)$/i;
 
+const TEST_CASE = /^\s*(?:(?:test|it)(?:\.\w+)?\s*\(|def test_|func Test\w*\(|#\[test\])/;
+/** Number of test cases in a test file (heuristic across JS/TS, Python, Go, Rust). */
+export function countTests(text: string | null): number {
+  return text === null ? 0 : text.split("\n").filter((l) => TEST_CASE.test(l)).length;
+}
+
 export function scoreRisk(i: RiskInput): RiskReport {
   const reasons: string[] = [];
   let score = 0;
@@ -66,12 +72,16 @@ export function scoreRisk(i: RiskInput): RiskReport {
   if (i.semantic.length) add(Math.min(30, 15 * i.semantic.length), `${i.semantic.length} interaction(s) with concurrent work`);
   if (deletions) add(Math.min(20, 10 * deletions), `${deletions} file deletion(s)`);
   if (i.merged) add(5, "auto-merged with concurrent changes");
+  // Deleting tests makes every check meaningless, so it is treated as risky in itself
+  let testsRemoved = 0;
+  for (const p of i.paths) if (TESTISH.test(p)) testsRemoved += Math.max(0, countTests(i.before(p)) - countTests(i.after[p]));
+  if (testsRemoved) add(30, `removes ${testsRemoved} test case(s)`);
   const touchesCode = i.paths.some((p) => !TESTISH.test(p) && /\.(ts|tsx|js|jsx|py|go|rs|java|rb|c|cc|cpp)$/.test(p));
   if (touchesCode && !i.paths.some((p) => TESTISH.test(p))) add(10, "code changed without tests");
   if (i.recentRejects) add(10, "author has recently rejected changes");
   score = Math.min(100, score);
   let tier: Tier = score >= i.policy.humanAbove ? "high" : score < i.policy.autoLandBelow ? "low" : "medium";
-  if (prot.length && tier === "low") tier = "medium"; // protected paths always get a reviewer
+  if ((prot.length || testsRemoved) && tier === "low") tier = "medium"; // protected paths and removed tests always get a reviewer
   const need: Need = tier === "high" ? "human" : tier === "medium" ? "any" : "none";
   return { score, tier, need, reasons };
 }

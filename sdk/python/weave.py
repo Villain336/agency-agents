@@ -54,10 +54,11 @@ class Weave:
     def provenance(self, rev: int): return self.request("GET", f"provenance/{rev}")
 
     # sessions
-    def open(self, goal: str, intent=None, id: Optional[str] = None, model: Optional[str] = None) -> dict:
-        return self.request("POST", "sessions", {"goal": goal, "intent": intent or [], "id": id, "model": model})["session"]
+    def open(self, goal: str, intent=None, id: Optional[str] = None, model: Optional[str] = None, base_rev: Optional[int] = None) -> dict:
+        return self.request("POST", "sessions", {"goal": goal, "intent": intent or [], "id": id, "model": model, "baseRev": base_rev})["session"]
     def read(self, sid: str, path: str): return self.request("GET", f"sessions/{sid}/file?path=" + urllib.parse.quote(path))["content"]
-    def write(self, sid: str, path: str, content: Optional[str]): return self.request("POST", f"sessions/{sid}/file", {"path": path, "content": content})
+    def write(self, sid: str, path: str, content: Optional[str], based_on: Optional[int] = None):
+        return self.request("POST", f"sessions/{sid}/file", {"path": path, "content": content, "basedOn": based_on})
     def declare(self, sid: str, paths): return self.request("POST", f"sessions/{sid}/intent", {"paths": paths})
     def preview(self, sid: str): return self.request("GET", f"sessions/{sid}/preview")
     def submit(self, sid: str, message: Optional[str] = None): return self.request("POST", f"sessions/{sid}/submit", {"message": message})

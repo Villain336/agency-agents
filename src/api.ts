@@ -110,10 +110,10 @@ export function route(c: Ctx): unknown {
       return repo.jobResult(sub, c.actor.open ? String(body.runner ?? "runner") : c.actor.name, { passed: !!body.passed, output: body.output, durationMs: body.durationMs, previewUrl: body.previewUrl });
     if (a === "sessions" && !id) {
       const agent = c.actor.open ? String(body.agent ?? "anonymous") : c.actor.name;
-      return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent, actor: c.actor, model: body.model, prompt: body.prompt });
+      return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent, actor: c.actor, model: body.model, prompt: body.prompt, baseRev: body.baseRev });
     }
     if (a === "sessions" && id) {
-      if (sub === "file") return (repo.write(id, body.path, body.content, c.actor), { ok: true });
+      if (sub === "file") return (repo.write(id, body.path, body.content, c.actor, body.basedOn), { ok: true });
       if (sub === "intent") return { warnings: repo.declare(id, body.paths ?? []) };
       if (sub === "submit") return repo.submit(id, body.message, c.actor);
       if (sub === "resolve") return repo.resolve(id, body.path, body.choices ?? body.how, c.actor);

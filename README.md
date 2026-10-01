@@ -93,6 +93,11 @@ const r = await weave.submit(s.id);  // landed | verifying | conflicted | needs_
 Weave. Divergent pushes need `--force` client-side (Weave merges them server-side). A push that needs
 checks or review is *not* rejected: it stays open as `refs/weave/sessions/<id>` and lands when ready.
 
+**Read through the session.** Open your session first and read via `GET /api/sessions/:id/file`.
+If you read trunk directly, keep the `rev` it returns and pass it as `baseRev` when opening the
+session (or `basedOn` on each write); Weave rejects edits derived from a stale read rather than
+silently reverting other agents' work. See [docs/LIVE-TRIAL.md](docs/LIVE-TRIAL.md).
+
 ### What `submit` returns
 
 | status | meaning | agent should |

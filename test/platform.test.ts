@@ -264,3 +264,83 @@ test("webhooks: matching events are queued for delivery", () => {
   assert.equal(r.s.outbox.length, 1);
   assert.equal(r.s.outbox[0].event.type, "landed");
 });
+
+// ---- findings from the live multi-agent trial ----------------------------
+test("stale-read hazard: pinning baseRev to the revision the agent read keeps concurrent work", () => {
+  const r = mk({ "todo.js": "line1\nline2\nline3\n" });
+  // alice lands a change at r2
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.write("a", "todo.js", "line1\nALICE\nline3\n");
+  r.submit("a");
+  // bruno read trunk at r1, then opened a session (which pins to r2) and wrote content derived from r1
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("b", "todo.js", "line1\nline2\nline3\nBRUNO\n");
+  r.submit("b");
+  assert.equal(r.head("todo.js"), "line1\nline2\nline3\nBRUNO\n", "documents the hazard: alice's line was silently reverted");
+
+  // the fix: bruno pins the session to r1, the revision he actually read, and Weave merges correctly
+  const r2 = mk({ "todo.js": "line1\nline2\nline3\n" });
+  r2.open({ id: "a", agent: "alice", goal: "g" });
+  r2.write("a", "todo.js", "line1\nALICE\nline3\n");
+  r2.submit("a");
+  r2.open({ id: "b", agent: "bruno", goal: "g", baseRev: 2 - 1 });
+  r2.write("b", "todo.js", "line1\nline2\nline3\nBRUNO\n");
+  assert.equal(r2.submit("b").status, "landed");
+  assert.equal(r2.head("todo.js"), "line1\nALICE\nline3\nBRUNO\n");
+});
+
+test("baseRev must be a real, past revision", () => {
+  const r = mk();
+  assert.throws(() => r.open({ id: "x", agent: "a", goal: "g", baseRev: 99 }), /baseRev/);
+  assert.throws(() => r.open({ id: "y", agent: "a", goal: "g", baseRev: -1 }), /baseRev/);
+});
+
+test("write with basedOn rejects edits derived from a stale read", () => {
+  const r = mk({ "f.js": "a\nb\n" });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.write("a", "f.js", "a\nALICE\n");
+  r.submit("a"); // trunk r2 changes f.js
+  r.open({ id: "b", agent: "bruno", goal: "g" }); // pinned to r2
+  assert.throws(() => r.write("b", "f.js", "a\nb\nBRUNO\n", undefined, 1), (e: any) => e.status === 409 && /read r1/.test(e.message) && /changed in r2/.test(e.message));
+  r.write("b", "f.js", "a\nALICE\nBRUNO\n", undefined, 2); // fresh read is fine
+  r.write("b", "g.js", "new\n", undefined, 1); // an unrelated file that did not change since r1 is fine
+});
+
+test("removing tests is flagged: score rises, review is required, even if checks would pass", () => {
+  const tests = "test('a', () => {});\ntest('b', () => {});\ntest('c', () => {});\n";
+  const r = mk({ "todo.test.js": tests, "todo.js": "x\n" });
+  r.open({ id: "s", agent: "chen", goal: "add search" });
+  r.write("s", "todo.test.js", "test('a', () => {});\n");
+  const res = r.submit("s");
+  assert.equal(res.status, "in_review");
+  assert.ok(res.risk!.reasons.some((x) => /removes 2 test case/.test(x)), res.risk!.reasons.join("|"));
+  assert.ok(res.risk!.tier !== "low");
+});
+
+test("adding tests is not penalized", () => {
+  const r = mk({ "todo.test.js": "test('a', () => {});\n", "todo.js": "x\n" });
+  r.open({ id: "s", agent: "chen", goal: "more tests" });
+  r.write("s", "todo.test.js", "test('a', () => {});\ntest('b', () => {});\n");
+  assert.equal(r.submit("s").status, "landed");
+});
+
+test("review pack marks which evidence applies to the current edits", () => {
+  const r = mk();
+  r.setConfig({ checks: [{ name: "unit", command: "t" }], policy: { autoLandBelow: 0 } });
+  r.open({ id: "s", agent: "a", goal: "g" });
+  r.write("s", "b.ts", "y");
+  r.submit("s");
+  let j = r.claimJob("r")!;
+  r.jobResult(j.id, "r", { passed: true });
+  assert.equal(r.session("s").status, "in_review");
+  assert.equal(r.reviewPack("s").evidence[0].current, true);
+  r.addComment("s", { path: "b.ts", line: 1, author: "rev", body: "x", suggestion: "z" });
+  r.applySuggestion("c1"); // edits change, so old evidence no longer describes the code
+  assert.equal(r.reviewPack("s").evidence[0].current, false);
+});
+
+test("resolve on a session with no known conflict explains how to detect one", () => {
+  const r = mk();
+  r.open({ id: "s", agent: "a", goal: "g" });
+  assert.throws(() => r.resolve("s", "a.ts", "ours"), /submit .* to detect conflicts/i);
+});

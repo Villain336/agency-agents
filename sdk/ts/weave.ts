@@ -57,13 +57,16 @@ export class Weave {
   status = () => this.request("GET", "status");
   files = (rev?: number) => this.request<{ rev: number; files: string[] }>("GET", `trunk/files${rev ? `?rev=${rev}` : ""}`);
   readTrunk = async (path: string) => (await this.request("GET", `trunk/file?path=${encodeURIComponent(path)}`)).content as string | null;
+  /** Read trunk and learn which revision you read; pass it as `baseRev` to open() or `basedOn` to write(). */
+  readTrunkAt = async (path: string) => (await this.request("GET", `trunk/file?path=${encodeURIComponent(path)}`)) as { content: string | null; rev: number };
   history = (limit = 20) => this.request("GET", `commits?limit=${limit}`);
   provenance = (rev: number) => this.request("GET", `provenance/${rev}`);
 
   // sessions
-  open = async (o: { goal: string; intent?: string[]; id?: string; model?: string; prompt?: string; agent?: string }) => (await this.request("POST", "sessions", o)).session as { id: string; status: Status; baseRev: number };
+  open = async (o: { goal: string; intent?: string[]; id?: string; model?: string; prompt?: string; agent?: string; baseRev?: number }) => (await this.request("POST", "sessions", o)).session as { id: string; status: Status; baseRev: number };
   read = async (id: string, path: string) => (await this.request("GET", `sessions/${id}/file?path=${encodeURIComponent(path)}`)).content as string | null;
-  write = (id: string, path: string, content: string | null) => this.request("POST", `sessions/${id}/file`, { path, content });
+  /** `basedOn`: the trunk revision you derived `content` from; stale edits are rejected instead of reverting others. */
+  write = (id: string, path: string, content: string | null, basedOn?: number) => this.request("POST", `sessions/${id}/file`, { path, content, basedOn });
   declare = (id: string, paths: string[]) => this.request("POST", `sessions/${id}/intent`, { paths });
   preview = (id: string) => this.request("GET", `sessions/${id}/preview`);
   submit = (id: string, message?: string) => this.request<SubmitResult>("POST", `sessions/${id}/submit`, { message });
