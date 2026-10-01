@@ -10,5 +10,6 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "scripts", "sdk/ts", "test-e2e"]
+  "include": ["src", "test", "scripts", "sdk/ts", "test-e2e", "test-ui"],
+  "exclude": ["test-ui/shots.ts"]
 }

@@ -18,6 +18,7 @@ const caches = new WeakMap<object, Cache>();
 
 export const OPEN_STATUSES = ["active", "conflicted", "needs_verify", "verifying", "in_review"];
 export const SESSION_PREFIX = "refs/weave/sessions/";
+export const TAG_PREFIX = "refs/tags/";
 export const MAIN_REF = "refs/heads/main";
 
 function cmpBytes(a: Uint8Array, b: Uint8Array): number {
@@ -204,6 +205,10 @@ export class GitView {
     const main = this.mainSha();
     if (main) out.push({ name: MAIN_REF, id: main });
     const sessions = Object.values(this.repo.s.sessions).filter((s) => OPEN_STATUSES.includes(s.status));
+    for (const tag of Object.values(this.repo.s.tags)) {
+      const id = tag.rev > 0 ? this.commitSha(tag.rev) : null;
+      if (id) out.push({ name: TAG_PREFIX + tag.name, id });
+    }
     for (const s of sessions) out.push({ name: SESSION_PREFIX + s.id, id: this.sessionCommit(s) });
     return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   }

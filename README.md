@@ -23,10 +23,19 @@ working for days. Weave is designed for many agents working for minutes.
 | Who wrote this? | **Signed provenance** on every commit (identity, model, prompt *hash*, risk, evidence, approvals) in a hash chain; the audit log is hash-chained too. |
 | Accounts, PATs | **Scoped identities**: kind (agent, human, reviewer, verifier, runner, admin), path scopes, hourly budgets; separation of duties (no self-review, no self-verify). |
 | Clone / push | **Real Git remote**: `git clone`/`fetch`/`push` over smart HTTP (protocol v2 and v0). A push to `main` lands through Weave's merge; session refs are `refs/weave/sessions/*`. Optional mirror to GitHub. |
+| Issues | **Tasks**: agent-native issues with priorities, dependencies, and **claim leases** (`next` picks the best unclaimed, unblocked task; an expired lease frees it). A session opened with `taskNumber` claims the task, and landing completes it. |
+| Notifications, @mentions | Per-identity inbox: mentions, assignments, review requests, landings, conflicts. |
+| Releases, tags | Immutable **tags** (also over git: `refs/tags/*`) and **releases** with notes. |
+| Settings pages | **Config as code**: `weave.json` in the repo sets checks, review paths, policy and merge strategies; changes need a human, and webhooks/mirrors can never come from a file. |
+| Duplicate review work | **Review claims**: a reviewer takes a change with a lease so others don't repeat it. |
+| Repos, forks | **Registry** (`/api/repos`): create, list, and **fork** with full history copied (own keys, own identities). |
+| Code browser, blame, search | **Browse API**: tree, blob, history, commit, diff, blame, search, readme, stats. |
 | Webhooks, API, SDKs | Signed webhooks with retries, REST API, **MCP server**, TypeScript and Python SDKs, long-poll event stream. |
 
 Each repo shard is one **Durable Object** (single-threaded, strongly consistent, SQLite storage;
 large files offload to R2). Repos can be **sharded by path prefix** so unrelated areas land in parallel.
+
+**Web UI** at `/` (served as static assets by the Worker): code browser with blame and search, history and commit pages with provenance, the change/review page with inline comments and suggestions, tasks (list and board), releases, notifications, repositories and settings. The earlier live swarm dashboard is at `/legacy`. `npm run ui:mock` runs the UI against a mock server; `npm run ui:shots` captures screenshots.
 
 ## Quick start
 
@@ -131,6 +140,11 @@ All routes accept `?repo=<name>` (default `default`) and `Authorization: Bearer 
 | `POST /api/runner/claim` · `POST /api/runner/jobs/:id/result` | Runner protocol |
 | `GET /api/events?after=&wait=` | Long-poll audit events |
 | `POST /api/identities` · `POST /api/config` · `POST /api/import` · `GET /api/export` | Admin, import, `git fast-import` export |
+| `GET /api/{tree,blob,history,diff,blame,search,readme,stats}` · `GET /api/commit/:rev` | Browse code |
+| `/api/tasks[/next\|/:n/{claim,release,heartbeat,close,reopen,comment,assign,update}]` | Tasks (issues) |
+| `GET /api/notifications` · `POST …/read` | Inbox |
+| `GET/POST /api/tags` · `GET/POST /api/releases[/:tag]` | Tags and releases |
+| `GET/POST /api/repos` (fork: `{name, from, rev?}`) · `POST /api/sessions/:id/claim-review` | Registry, forks, review claims |
 | `/git/<repo>/…` · `/mcp` | Git smart HTTP · MCP (Streamable HTTP) |
 
 ## Security notes
@@ -160,13 +174,15 @@ All routes accept `?repo=<name>` (default `default`) and `Authorization: Bearer 
 - **Hot lines still serialize.** Sixteen agents all editing one line is the worst case for optimistic merging.
   List merging and union fix the common shapes (exports, imports, appended tests); other hot spots (one
   function everyone rewrites) still conflict, and agents re-apply their change. See docs/SWARM-RUN.md.
-- No issues, projects, code search, web code browser, forks, or notifications. Weave is a
-  collaboration layer for agent-scale change, not a GitHub clone.
+- Not yet: organizations/teams/SSO, projects boards, packages, Pages, a workflow engine and hosted runners
+  (see docs/ROADMAP.md). Forks copy history but there are no cross-repo pull requests yet; forked history keeps
+  the upstream's provenance hashes, but signatures were made with the upstream's key.
 
 ## Layout
 
 `src/repo.ts` core state machine · `src/merge.ts` diff3 · `src/semantic.ts` interaction detector ·
 `src/review.ts` risk scoring · `src/store.ts` SQLite/R2 persistence · `src/api.ts` router ·
+`src/forge-api.ts` tasks/inbox/tags routes · `src/browse.ts` code browser API · `src/registry.ts` repo index ·
 `src/index.ts` Worker + Durable Object · `src/mcp.ts` MCP · `src/git/` Git bridge ·
 `sdk/` clients · `scripts/` runner, demo, import · `test/` unit tests · `test-e2e/` live end-to-end ·
 `docs/` BENCHMARK (simulation vs push-and-retry and a merge queue, with caveats), SWARM-RUN (16 real agents, three runs, what broke), LIVE-TRIAL, RESEARCH (design rationale).

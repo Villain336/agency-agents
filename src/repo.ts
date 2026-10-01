@@ -76,6 +76,8 @@ export interface Config {
   mirror?: { url: string };
   /** hot-spot merge strategies: list-aware merging (default on) and union paths (globs, default none) */
   merge: { lists: boolean; union: string[] };
+  /** set on forks: where this repository's history was copied from */
+  forkedFrom?: { repo: string; rev: number };
 }
 
 export interface Conflict {
@@ -126,7 +128,11 @@ export interface Session {
   /** train mode: queued changes this one would conflict with; it is not built until they resolve */
   blockedOn?: string[];
   /** what reviewers/verifiers told the author, so the reason is never only in the audit log */
-  feedback?: { type: "rejected" | "verify_failed" | "reverts" | "duplicates"; by: string; note: string; ts: number }[];
+  feedback?: { type: "rejected" | "verify_failed" | "reverts" | "duplicates" | "config"; by: string; note: string; ts: number }[];
+  /** the task this session works on (landing it completes the task) */
+  taskNumber?: number;
+  /** a reviewer who has taken this change; others cannot review it while the lease is live */
+  reviewClaim?: { by: string; since: number; leaseUntil: number };
   /** overlapping edits resolved by the list/union strategies at the last evaluation */
   autoResolved?: { path: string; count: number }[];
   /** trunk revision at which the current conflicts were computed; resolutions are based on it */
@@ -229,8 +235,75 @@ export interface OutboxItem {
   lastError?: string;
 }
 
+export type TaskStatus = "open" | "claimed" | "done" | "closed";
+export type Priority = "low" | "normal" | "high" | "urgent";
+export const PRIORITIES: Priority[] = ["low", "normal", "high", "urgent"];
+
+export interface TaskComment {
+  id: string;
+  author: string;
+  body: string;
+  ts: number;
+}
+
+/** An issue, built for agents: it can be claimed with a lease, linked to sessions, and closed by landing. */
+export interface Task {
+  id: string;
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+  priority: Priority;
+  status: TaskStatus;
+  creator: string;
+  assignee?: string;
+  claim?: { by: string; since: number; leaseUntil: number };
+  sessions: string[];
+  comments: TaskComment[];
+  dependsOn: number[];
+  createdAt: number;
+  updatedAt: number;
+  closedAt?: number;
+}
+
+export type NotificationType = "mention" | "task_assigned" | "task_commented" | "review_requested" | "change_landed" | "change_conflicted" | "change_commented";
+
+export interface Notification {
+  id: string;
+  to: string;
+  ts: number;
+  type: NotificationType;
+  message: string;
+  ref: { kind: "task" | "session"; id: string };
+  read: boolean;
+}
+
+export interface Tag {
+  name: string;
+  rev: number;
+  message: string;
+  tagger: string;
+  ts: number;
+}
+
+export interface Release {
+  tag: string;
+  title: string;
+  notes: string;
+  author: string;
+  ts: number;
+  draft: boolean;
+  prerelease: boolean;
+}
+
+export const CONFIG_FILE = "weave.json";
+
 export interface State {
   rev: number;
+  tasks: Record<string, Task>;
+  notifications: Notification[];
+  tags: Record<string, Tag>;
+  releases: Record<string, Release>;
   /** path -> versions, ascending by rev; content null = deleted */
   files: Record<string, { rev: number; content: string | null }[]>;
   commits: Commit[];
@@ -244,7 +317,7 @@ export interface State {
   secrets: { signingKey: string };
   auditHead: string;
   mirror: { lastRev: number };
-  seq: { event: number; comment: number; job: number; outbox: number; identity: number; verifyStamp?: number };
+  seq: { event: number; comment: number; job: number; outbox: number; identity: number; task: number; notification: number; verifyStamp?: number };
   /** legacy mirror of config.reviewPaths, kept for older clients */
   reviewPaths: string[];
 }
@@ -260,9 +333,9 @@ export class WeaveError extends Error {
 export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [], merge: { lists: true, union: [] } });
 
 export const emptyState = (): State => ({
-  rev: 0, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
+  rev: 0, tasks: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
   config: defaultConfig(), secrets: { signingKey: randomToken("sk", 32) }, auditHead: "", mirror: { lastRev: 0 },
-  seq: { event: 0, comment: 0, job: 0, outbox: 0, identity: 0 }, reviewPaths: [],
+  seq: { event: 0, comment: 0, job: 0, outbox: 0, identity: 0, task: 0, notification: 0 }, reviewPaths: [],
 });
 
 /** Fill fields older persisted states don't have. */
@@ -466,22 +539,25 @@ export class Repo {
     if (s.actorId && s.actorId !== actor.id) throw new WeaveError(`session ${s.id} belongs to ${s.agent}`, 403);
   }
 
-  open(opts: { id?: string; agent: string; goal: string; intent?: string[]; actor?: Actor; model?: string; prompt?: string; baseRev?: number }): { session: Session; warnings: string[] } {
+  open(opts: { id?: string; agent: string; goal: string; intent?: string[]; actor?: Actor; model?: string; prompt?: string; baseRev?: number; taskNumber?: number }): { session: Session; warnings: string[] } {
     this.checkBudget(opts.actor, "open");
     if (opts.baseRev !== undefined && (!Number.isInteger(opts.baseRev) || opts.baseRev < 0 || opts.baseRev > this.s.rev))
       throw new WeaveError(`baseRev must be an integer between 0 and the current revision (r${this.s.rev})`);
     const id = opts.id ?? `${opts.agent}-${Object.keys(this.s.sessions).length + 1}`;
     const existing = this.s.sessions[id];
     if (existing && LIVE.includes(existing.status)) throw new WeaveError(`session ${id} is still ${existing.status}`, 409);
+    if (opts.taskNumber !== undefined) this.claimTask(opts.taskNumber, opts.agent);
     const ident = this.identityOf(opts.actor?.id);
     const session: Session = {
       id, agent: opts.agent, actorId: opts.actor && !opts.actor.open ? opts.actor.id : undefined, model: opts.model ?? ident?.model,
-      promptHash: opts.prompt ? sha256(opts.prompt) : undefined, goal: opts.goal, baseRev: opts.baseRev ?? this.s.rev, edits: {}, pathBase: {},
+      promptHash: opts.prompt ? sha256(opts.prompt) : undefined, goal: opts.goal, taskNumber: opts.taskNumber, baseRev: opts.baseRev ?? this.s.rev, edits: {}, pathBase: {},
       intent: [], status: "active", conflicts: [], risks: [], approvals: [], evidence: [], previews: [], createdAt: this.now(),
     };
     this.s.sessions[id] = session;
     this.dirtySessions.add(id);
     this.log("open", `${opts.agent} started: ${opts.goal}`, session);
+    if (opts.taskNumber !== undefined) this.getTaskRaw(opts.taskNumber).sessions.push(id);
+    this.notifyMentions(opts.goal, opts.agent, { kind: "session", id }, `session ${id}`);
     return { session, warnings: this.declare(id, opts.intent ?? [], true) };
   }
 
@@ -670,11 +746,14 @@ export class Repo {
 
   private riskOf(s: Session, r: ReturnType<Repo["mergeAll"]>, reverts: Revert[] = []): RiskReport {
     const mine = Object.values(this.s.sessions).filter((x) => x.agent === s.agent && x.id !== s.id).slice(-5);
-    return scoreRisk({
+    const risk = scoreRisk({
       reverts, autoResolved: r.auto.reduce((n, a) => n + a.count, 0),
       paths: Object.keys(r.changes), before: (p) => this.head(p), after: r.changes, semantic: r.risks, merged: r.merged,
       protectedPaths: this.s.config.reviewPaths, recentRejects: mine.filter((x) => x.status === "rejected").length, policy: this.policy(),
     });
+    if (r.changes[CONFIG_FILE] !== undefined && risk.need !== "human")
+      return { ...risk, score: Math.max(risk.score, this.policy().humanAbove), tier: "high", need: "human", reasons: [...risk.reasons, `+config: ${CONFIG_FILE} changes checks, policy and review rules, so a human approves it`] };
+    return risk;
   }
 
   /** Try to land a session onto trunk atomically, subject to policy gates. */
@@ -710,6 +789,17 @@ export class Repo {
       (s.feedback ??= []).push({ type: "reverts", by: "weave", ts: this.now(), note: `landing this would remove ${what}. Re-read the current trunk, re-apply your change on top of it and put the result in your session; if removing that work is intended, submit with allowRevert.` });
       this.log("reverts", `${s.agent}'s change would remove work landed by ${[...new Set(reverts.map((x) => x.agent))].join(", ")}; sent back to the author`, s);
       return { status: "active", reverts };
+    }
+    const cfg = r.changes[CONFIG_FILE];
+    if (typeof cfg === "string") {
+      const parsed = Repo.parseConfigFile(cfg);
+      if ("error" in parsed) {
+        s.status = "active";
+        s.blockedOn = undefined;
+        (s.feedback ??= []).push({ type: "config", by: "weave", ts: this.now(), note: parsed.error });
+        this.log("config_invalid", `${s.agent}'s ${CONFIG_FILE} was rejected: ${parsed.error}`, s);
+        return { status: "active" };
+      }
     }
     const dupes = this.duplicatesOf(r.changes);
     if (dupes.length && !opts.allowRevert) {
@@ -762,6 +852,7 @@ export class Repo {
     // 3. risk-tiered review
     if (risk.need !== "none" && !this.approved(s, risk.need)) {
       if (s.status !== "in_review") this.log("review_requested", `${s.agent}'s ${risk.tier}-risk change (${risk.score}) needs ${risk.need === "human" ? "a human" : "a"} reviewer: ${risk.reasons.slice(0, 3).join("; ")}`, s);
+      if (s.status !== "in_review") this.notifyReviewers(s, risk.need);
       s.status = "in_review";
       return { status: "in_review", risk };
     }
@@ -777,6 +868,7 @@ export class Repo {
   private land(s: Session, changes: Record<string, string | null>, merged: boolean, risk: RiskReport, message?: string, actor?: Actor) {
     this.checkBudget(actor ?? this.actorFor(s), "land");
     const msg = message ?? s.goal;
+    const wasWaiting = s.status === "in_review" || s.status === "verifying" || s.status === "needs_verify";
     const ident = this.identityOf(s.actorId);
     s.landedRev = this.commit(s.id, s.agent, msg, changes, merged, {
       goal: s.goal, actor: { id: s.actorId ?? "open", name: s.agent, kind: ident?.kind ?? "agent", model: s.model }, promptHash: s.promptHash,
@@ -786,6 +878,16 @@ export class Repo {
     });
     s.status = "landed";
     s.blockedOn = undefined;
+    s.reviewClaim = undefined;
+    const task = s.taskNumber ? this.s.tasks[`t${s.taskNumber}`] : undefined;
+    if (task && task.status !== "closed") {
+      task.status = "done";
+      task.claim = undefined;
+      task.closedAt = task.updatedAt = this.now();
+      task.comments.push({ id: `tc${task.comments.length + 1}`, author: "weave", body: `${s.agent} landed in r${s.landedRev}: ${msg}`, ts: this.now() });
+    }
+    if (wasWaiting) this.notify(s.agent, "change_landed", `your change landed as r${s.landedRev}: ${msg}`, { kind: "session", id: s.id });
+    if (changes[CONFIG_FILE]) this.applyConfigFile(changes[CONFIG_FILE]!);
     this.log("landed", `${s.agent} landed r${s.landedRev}${merged ? " (auto-merged with concurrent work)" : ""}: ${msg}`, s);
     this.pump();
     return { status: "landed" as Status, rev: s.landedRev, risk };
@@ -794,6 +896,11 @@ export class Repo {
   private actorFor(s: Session): Actor | undefined {
     const i = this.identityOf(s.actorId);
     return i ? { id: i.id, name: i.name, kind: i.kind, scopes: i.scopes, paths: i.paths } : undefined;
+  }
+
+  private applyConfigFile(text: string) {
+    const r = Repo.parseConfigFile(text);
+    if ("patch" in r) this.setConfig(r.patch);
   }
 
   /** After a landing, sessions parked on checks may now be able to land. */
@@ -822,6 +929,8 @@ export class Repo {
         x.conflictRev = this.s.rev;
         x.approvals = [];
         x.verified = undefined;
+        x.reviewClaim = undefined;
+        this.notify(x.agent, "change_conflicted", `your change no longer merges with trunk: ${fresh.conflicts.map((c) => c.path).join(", ")}`, { kind: "session", id: x.id });
         this.log("conflict", `${x.agent}'s change no longer merges with trunk (${fresh.conflicts.map((c) => c.path).join(", ")}); sent back to the author`, x);
       }
       const busy = new Set(Object.values(this.s.jobs).filter((j) => j.status === "queued" || j.status === "running").map((j) => j.sessionId));
@@ -1055,8 +1164,12 @@ export class Repo {
       throw new WeaveError(`session ${id} is not awaiting review: it is ${s.status}${s.status === "landed" ? ` (r${s.landedRev})` : ""}${last ? `; last feedback from ${last.by}: ${last.note.slice(0, 120)}` : ""}`, 409);
     }
     if (who.name === s.agent) throw new WeaveError("an agent cannot review its own change", 403);
+    const claim = this.liveReviewClaim(s);
+    if (claim && claim.by !== who.name) throw new WeaveError(`review of ${id} is claimed by ${claim.by} until ${new Date(claim.leaseUntil).toISOString()}`, 409);
     if (!approve) {
       s.status = "rejected";
+      s.reviewClaim = undefined;
+      this.releaseTaskFor(s);
       (s.feedback ??= []).push({ type: "rejected", by: who.name, note, ts: this.now() });
       this.log("rejected", `${who.name} rejected ${s.agent}'s change${note ? `: ${note}` : ""}`, s, who.name);
       return { status: s.status };
@@ -1073,6 +1186,8 @@ export class Repo {
     const s = this.session(id);
     this.assertOwner(s, actor);
     s.status = "rejected";
+    s.reviewClaim = undefined;
+    this.releaseTaskFor(s);
     this.log("abandoned", `${s.agent} abandoned their session`, s);
     this.pump();
   }
@@ -1084,6 +1199,8 @@ export class Repo {
     if (c.parent && !this.s.comments[c.parent]) throw new WeaveError(`no such comment: ${c.parent}`, 404);
     const cm: Comment = { id: `c${++this.s.seq.comment}`, sessionId: id, path: c.path, line: c.line, endLine: c.endLine, author: c.author, body: c.body ?? "", suggestion: c.suggestion, parent: c.parent, blocking: !!c.blocking, resolved: false, ts: this.now() };
     this.s.comments[cm.id] = cm;
+    this.notifyMentions(cm.body, c.author, { kind: "session", id }, `a review comment on ${c.path}:${c.line}`);
+    if (c.author !== s.agent) this.notify(s.agent, "change_commented", `${c.author} commented on ${c.path}:${c.line}`, { kind: "session", id }, c.author);
     this.log("comment", `${c.author} commented on ${c.path}:${c.line}${c.suggestion !== undefined ? " (with a suggested change)" : ""}`, s, c.author);
     return cm;
   }
@@ -1147,11 +1264,304 @@ export class Repo {
   reviewQueue(kind: Kind | "unknown" = "unknown") {
     const waiting = Object.values(this.s.sessions).filter((x) => x.status === "in_review");
     const ranked = waiting
-      .map((x) => ({ id: x.id, agent: x.agent, goal: x.goal, score: x.risk?.score ?? 0, tier: x.risk?.tier ?? "medium", need: x.risk?.need ?? "any", waitingMs: this.now() - x.createdAt }))
+      .map((x) => ({ id: x.id, agent: x.agent, goal: x.goal, score: x.risk?.score ?? 0, tier: x.risk?.tier ?? "medium", need: x.risk?.need ?? "any", waitingMs: this.now() - x.createdAt, claimedBy: this.liveReviewClaim(x)?.by }))
       .sort((a, b) => b.score - a.score || b.waitingMs - a.waitingMs);
     const eligible = ranked.filter((x) => x.need !== "human" || kind === "human" || kind === "admin" || kind === "unknown");
     const budget = this.policy().attentionBudget;
     return { budget, next: eligible.slice(0, budget), deferred: eligible.slice(budget), notForYou: ranked.filter((x) => !eligible.includes(x)) };
+  }
+
+  // ---- forks ----------------------------------------------------------------
+  /** Everything a fork needs: history up to `rev` (file versions, commits, tags, releases). No sessions, identities or secrets. */
+  snapshot(rev = this.s.rev) {
+    if (!Number.isInteger(rev) || rev < 0 || rev > this.s.rev) throw new WeaveError(`revision must be an integer between 0 and r${this.s.rev}`);
+    const files: State["files"] = {};
+    for (const [p, vs] of Object.entries(this.s.files)) {
+      const keep = vs.filter((v) => v.rev <= rev);
+      if (keep.length) files[p] = keep;
+    }
+    const tags = Object.fromEntries(Object.entries(this.s.tags).filter(([, x]) => x.rev <= rev));
+    const releases = Object.fromEntries(Object.entries(this.s.releases).filter(([k]) => k in tags));
+    return { rev, files, commits: this.s.commits.filter((c) => c.rev <= rev), tags, releases };
+  }
+  /** A new repository holding a copy of another's history. It has its own signing key, identities and config. */
+  static fromSnapshot(snap: ReturnType<Repo["snapshot"]>, from: { repo: string }, now?: () => number): Repo {
+    const r = new Repo(undefined, now);
+    r.s.rev = snap.rev;
+    r.s.files = snap.files;
+    r.s.commits = snap.commits;
+    r.s.tags = snap.tags;
+    r.s.releases = snap.releases;
+    r.s.mirror.lastRev = snap.rev;
+    r.s.config.forkedFrom = { repo: from.repo, rev: snap.rev };
+    r.log("forked", `forked from ${from.repo} at r${snap.rev}`);
+    return r;
+  }
+
+  // ---- tasks (agent-native issues) ---------------------------------------
+  private getTaskRaw(n: number): Task {
+    const t = this.s.tasks[`t${n}`];
+    if (!t) throw new WeaveError(`no such task #${n}`, 404);
+    return t;
+  }
+  /** A claim whose lease ran out no longer holds the task. */
+  private expireClaim(t: Task) {
+    if (t.status === "claimed" && t.claim && t.claim.leaseUntil <= this.now()) {
+      if (t.assignee === t.claim.by) t.assignee = undefined;
+      t.claim = undefined;
+      t.status = "open";
+    }
+    return t;
+  }
+  getTask(n: number): Task {
+    return this.expireClaim(this.getTaskRaw(n));
+  }
+  private taskBlockers(t: Task): number[] {
+    return t.dependsOn.filter((d) => {
+      const x = this.s.tasks[`t${d}`];
+      return x && x.status !== "done" && x.status !== "closed";
+    });
+  }
+  private mentionsIn(text: string): string[] {
+    return [...new Set([...text.matchAll(/(?<![\w@])@([A-Za-z][\w-]{0,38})/g)].map((m) => m[1]))];
+  }
+  private notify(to: string, type: NotificationType, message: string, ref: Notification["ref"], from?: string) {
+    if (!to || to === from) return;
+    const n: Notification = { id: `n${++this.s.seq.notification}`, to, ts: this.now(), type, message, ref, read: false };
+    this.s.notifications.push(n);
+    const mine = this.s.notifications.filter((x) => x.to === to);
+    if (mine.length > 200) {
+      const drop = new Set(mine.slice(0, mine.length - 200));
+      this.s.notifications = this.s.notifications.filter((x) => !drop.has(x));
+    }
+  }
+  private notifyMentions(text: string, from: string, ref: Notification["ref"], what: string, skip: string[] = []) {
+    for (const who of this.mentionsIn(text)) if (!skip.includes(who)) this.notify(who, "mention", `${from} mentioned you in ${what}`, ref, from);
+  }
+
+  createTask(creator: string, o: { title: string; body?: string; labels?: string[]; priority?: Priority; dependsOn?: number[] }): Task {
+    const title = (o.title ?? "").trim();
+    if (!title) throw new WeaveError("task needs a title");
+    if (title.length > 300) throw new WeaveError("task title is too long (300 characters max)");
+    const priority = o.priority ?? "normal";
+    if (!PRIORITIES.includes(priority)) throw new WeaveError(`priority must be one of ${PRIORITIES.join(", ")}`);
+    const dependsOn = [...new Set(o.dependsOn ?? [])];
+    for (const d of dependsOn) this.getTaskRaw(d);
+    const number = ++this.s.seq.task;
+    const now = this.now();
+    const t: Task = { id: `t${number}`, number, title, body: o.body ?? "", labels: [...new Set(o.labels ?? [])], priority, status: "open", creator, sessions: [], comments: [], dependsOn, createdAt: now, updatedAt: now };
+    this.s.tasks[t.id] = t;
+    this.log("task_created", `${creator} opened task #${number}: ${title}`, undefined, creator);
+    this.notifyMentions(`${title}\n${t.body}`, creator, { kind: "task", id: String(number) }, `task #${number}`);
+    return t;
+  }
+
+  listTasks(f: { status?: TaskStatus; label?: string; q?: string; assignee?: string } = {}): Task[] {
+    const q = f.q?.toLowerCase();
+    return Object.values(this.s.tasks)
+      .map((t) => this.expireClaim(t))
+      .filter((t) => (!f.status || t.status === f.status) && (!f.label || t.labels.includes(f.label)) && (!f.assignee || t.assignee === f.assignee) && (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)))
+      .sort((a, b) => b.number - a.number);
+  }
+
+  /** The best task for an agent to pick up: unclaimed, unblocked, highest priority, then oldest. */
+  nextTask(f: { labels?: string[] } = {}): Task | null {
+    const rank = (p: Priority) => PRIORITIES.indexOf(p);
+    const c = this.listTasks({ status: "open" })
+      .filter((t) => !this.taskBlockers(t).length && (!f.labels?.length || t.labels.some((l) => f.labels!.includes(l))))
+      .sort((a, b) => rank(b.priority) - rank(a.priority) || a.createdAt - b.createdAt || a.number - b.number);
+    return c[0] ?? null;
+  }
+
+  claimTask(n: number, by: string, leaseSec = 900): Task {
+    const t = this.getTask(n);
+    if (t.status === "done" || t.status === "closed") throw new WeaveError(`task #${n} is ${t.status}`, 409);
+    if (t.claim && t.claim.by !== by) throw new WeaveError(`task #${n} is claimed by ${t.claim.by} until ${new Date(t.claim.leaseUntil).toISOString()}`, 409);
+    const blockers = this.taskBlockers(t);
+    if (blockers.length) throw new WeaveError(`task #${n} is blocked by ${blockers.map((b) => "#" + b).join(", ")}`, 409);
+    const now = this.now();
+    t.claim = { by, since: t.claim?.since ?? now, leaseUntil: now + Math.max(1, leaseSec) * 1000 };
+    t.status = "claimed";
+    t.assignee = by;
+    t.updatedAt = now;
+    if (!t.claim || t.claim.since === now) this.log("task_claimed", `${by} claimed task #${n}`, undefined, by);
+    return t;
+  }
+  heartbeatTask(n: number, by: string, leaseSec = 900): Task {
+    const t = this.getTask(n);
+    if (!t.claim || t.claim.by !== by) throw new WeaveError(t.claim ? `task #${n} is claimed by ${t.claim.by}, not ${by}` : `task #${n} is not claimed (the lease may have expired)`, 409);
+    t.claim.leaseUntil = this.now() + Math.max(1, leaseSec) * 1000;
+    return t;
+  }
+  releaseTask(n: number, by: string): Task {
+    const t = this.getTask(n);
+    if (t.claim && t.claim.by !== by) throw new WeaveError(`task #${n} is claimed by ${t.claim.by}, not ${by}`, 409);
+    if (t.status === "claimed") {
+      if (t.assignee === t.claim?.by) t.assignee = undefined;
+      t.claim = undefined;
+      t.status = "open";
+      t.updatedAt = this.now();
+      this.log("task_released", `${by} released task #${n}`, undefined, by);
+    }
+    return t;
+  }
+  closeTask(n: number, by: string): Task {
+    const t = this.getTask(n);
+    t.status = "closed";
+    t.claim = undefined;
+    t.closedAt = t.updatedAt = this.now();
+    this.log("task_closed", `${by} closed task #${n}`, undefined, by);
+    return t;
+  }
+  reopenTask(n: number, by: string): Task {
+    const t = this.getTask(n);
+    t.status = "open";
+    t.closedAt = undefined;
+    t.updatedAt = this.now();
+    this.log("task_reopened", `${by} reopened task #${n}`, undefined, by);
+    return t;
+  }
+  commentTask(n: number, by: string, body: string): Task {
+    const t = this.getTask(n);
+    if (!body?.trim()) throw new WeaveError("comment needs a body");
+    t.comments.push({ id: `tc${t.comments.length + 1}`, author: by, body, ts: this.now() });
+    t.updatedAt = this.now();
+    const ref = { kind: "task" as const, id: String(n) };
+    const mentioned = this.mentionsIn(body);
+    this.notifyMentions(body, by, ref, `task #${n}`);
+    for (const who of new Set([t.assignee, t.claim?.by])) if (who && !mentioned.includes(who)) this.notify(who, "task_commented", `${by} commented on task #${n}`, ref, by);
+    return t;
+  }
+  assignTask(n: number, assignee: string, by: string): Task {
+    const t = this.getTask(n);
+    t.assignee = assignee;
+    t.updatedAt = this.now();
+    this.notify(assignee, "task_assigned", `${by} assigned you task #${n}: ${t.title}`, { kind: "task", id: String(n) }, by);
+    return t;
+  }
+  updateTask(n: number, p: { title?: string; body?: string; labels?: string[]; priority?: Priority; dependsOn?: number[] }): Task {
+    const t = this.getTask(n);
+    if (p.title !== undefined) {
+      if (!p.title.trim()) throw new WeaveError("task needs a title");
+      t.title = p.title.trim();
+    }
+    if (p.body !== undefined) t.body = p.body;
+    if (p.labels) t.labels = [...new Set(p.labels)];
+    if (p.priority) {
+      if (!PRIORITIES.includes(p.priority)) throw new WeaveError(`priority must be one of ${PRIORITIES.join(", ")}`);
+      t.priority = p.priority;
+    }
+    if (p.dependsOn) {
+      for (const d of p.dependsOn) if (d === n) throw new WeaveError("a task cannot depend on itself");
+      for (const d of p.dependsOn) this.getTaskRaw(d);
+      t.dependsOn = [...new Set(p.dependsOn)];
+    }
+    t.updatedAt = this.now();
+    return t;
+  }
+  private releaseTaskFor(s: Session) {
+    const t = s.taskNumber ? this.s.tasks[`t${s.taskNumber}`] : undefined;
+    if (t && t.status === "claimed" && t.claim?.by === s.agent) this.releaseTask(t.number, s.agent);
+  }
+
+  // ---- notifications -------------------------------------------------------
+  notificationsFor(to: string, f: { unread?: boolean } = {}): Notification[] {
+    return this.s.notifications.filter((n) => n.to === to && (!f.unread || !n.read)).reverse();
+  }
+  markRead(to: string, f: { ids?: string[]; all?: boolean }) {
+    let n = 0;
+    for (const x of this.s.notifications) if (x.to === to && !x.read && (f.all || f.ids?.includes(x.id))) (x.read = true), n++;
+    return { marked: n };
+  }
+  private notifyReviewers(s: Session, need: Need) {
+    for (const i of Object.values(this.s.identities)) {
+      if (i.disabled || i.name === s.agent) continue;
+      if (i.kind === "human" || (i.kind === "reviewer" && need !== "human")) this.notify(i.name, "review_requested", `${s.agent}'s change needs review: ${s.goal}`, { kind: "session", id: s.id }, s.agent);
+    }
+  }
+
+  // ---- tags and releases ---------------------------------------------------
+  createTag(name: string, o: { rev?: number; message?: string; tagger: string }): Tag {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,99}$/.test(name) || name.includes("..")) throw new WeaveError("invalid tag name: use letters, digits, '.', '_', '-', '/' (max 100)");
+    if (this.s.tags[name]) throw new WeaveError(`tag ${name} already exists (tags are immutable)`, 409);
+    const rev = o.rev ?? this.s.rev;
+    if (!Number.isInteger(rev) || rev < 0 || rev > this.s.rev) throw new WeaveError(`revision must be an integer between 0 and r${this.s.rev}`);
+    const t: Tag = { name, rev, message: o.message ?? "", tagger: o.tagger, ts: this.now() };
+    this.s.tags[name] = t;
+    this.log("tag", `${o.tagger} tagged ${name} at r${rev}`, undefined, o.tagger);
+    return t;
+  }
+  listTags(): Tag[] {
+    return Object.values(this.s.tags).sort((a, b) => b.ts - a.ts || a.name.localeCompare(b.name));
+  }
+  createRelease(o: { tag: string; title: string; notes: string; draft?: boolean; prerelease?: boolean }, author: string): Release {
+    if (!this.s.tags[o.tag]) throw new WeaveError(`no such tag: ${o.tag}`, 404);
+    if (this.s.releases[o.tag]) throw new WeaveError(`tag ${o.tag} already has a release`, 409);
+    const r: Release = { tag: o.tag, title: o.title || o.tag, notes: o.notes ?? "", author, ts: this.now(), draft: !!o.draft, prerelease: !!o.prerelease };
+    this.s.releases[o.tag] = r;
+    this.log("release", `${author} published release ${r.title} (${o.tag})`, undefined, author);
+    return r;
+  }
+  getRelease(tag: string): Release {
+    const r = this.s.releases[tag];
+    if (!r) throw new WeaveError(`no release for tag ${tag}`, 404);
+    return r;
+  }
+  listReleases(): Release[] {
+    return Object.values(this.s.releases).sort((a, b) => b.ts - a.ts);
+  }
+
+  // ---- review claims -------------------------------------------------------
+  private liveReviewClaim(s: Session) {
+    return s.reviewClaim && s.reviewClaim.leaseUntil > this.now() ? s.reviewClaim : undefined;
+  }
+  claimReview(id: string, by: string, leaseSec = 900): Session {
+    const s = this.session(id);
+    if (s.status !== "in_review") throw new WeaveError(`session ${id} is not awaiting review: it is ${s.status}`, 409);
+    const c = this.liveReviewClaim(s);
+    if (c && c.by !== by) throw new WeaveError(`review of ${id} is claimed by ${c.by} until ${new Date(c.leaseUntil).toISOString()}`, 409);
+    const now = this.now();
+    s.reviewClaim = { by, since: c?.since ?? now, leaseUntil: now + Math.max(1, leaseSec) * 1000 };
+    this.dirtySessions.add(id);
+    if (!c) this.log("review_claimed", `${by} is reviewing ${s.agent}'s change`, s, by);
+    return s;
+  }
+
+  // ---- config as code (weave.json) -----------------------------------------
+  /** Validate weave.json and turn it into a config patch. Webhooks, mirrors and shards are never taken from a file. */
+  static parseConfigFile(text: string): { patch: Partial<Config> } | { error: string } {
+    let j: any;
+    try {
+      j = JSON.parse(text);
+    } catch (e) {
+      return { error: `weave.json is not valid JSON (${(e as Error).message})` };
+    }
+    if (!j || typeof j !== "object" || Array.isArray(j)) return { error: "weave.json must be a JSON object" };
+    const patch: Partial<Config> = {};
+    const strs = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    if (j.checks !== undefined) {
+      if (!Array.isArray(j.checks) || !j.checks.every((c: any) => c && typeof c.name === "string" && typeof c.command === "string" && (c.timeoutMs === undefined || typeof c.timeoutMs === "number")))
+        return { error: "weave.json: checks must be a list of {name, command, timeoutMs?}" };
+      patch.checks = j.checks;
+    }
+    if (j.reviewPaths !== undefined) {
+      if (!strs(j.reviewPaths)) return { error: "weave.json: reviewPaths must be a list of strings" };
+      patch.reviewPaths = j.reviewPaths;
+    }
+    if (j.policy !== undefined) {
+      if (!j.policy || typeof j.policy !== "object" || Array.isArray(j.policy)) return { error: "weave.json: policy must be an object" };
+      const p: Record<string, unknown> = {};
+      for (const k of Object.keys(DEFAULT_POLICY)) if (k in j.policy) {
+        if (typeof j.policy[k] !== typeof (DEFAULT_POLICY as any)[k]) return { error: `weave.json: policy.${k} must be a ${typeof (DEFAULT_POLICY as any)[k]}` };
+        p[k] = j.policy[k];
+      }
+      patch.policy = p as unknown as Policy;
+    }
+    if (j.merge !== undefined) {
+      if (!j.merge || typeof j.merge !== "object" || (j.merge.union !== undefined && !strs(j.merge.union))) return { error: "weave.json: merge must be {lists?, union?: string[]}" };
+      patch.merge = { lists: j.merge.lists !== false, union: j.merge.union ?? [] };
+    }
+    return { patch };
   }
 
   // ---- provenance -----------------------------------------------------

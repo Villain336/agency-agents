@@ -324,6 +324,46 @@ await step("large files are offloaded to R2 and land correctly", async () => {
   assert.equal(await alice.readTrunk("big.txt"), big);
 });
 
+await step("forge: tasks with claims, notifications, tags, releases, browse, registry and forks", async () => {
+  const alice = as(ids.alice);
+  const t = await admin.createTask({ title: "Document big.txt", body: "ping @alice", labels: ["docs"], priority: "high" });
+  assert.equal((await alice.nextTask()).task.number, t.number);
+  const s = await alice.open({ goal: "docs", intent: ["docs.md"], taskNumber: t.number } as any);
+  assert.equal((await alice.task(t.number)).status, "claimed");
+  await rejects(admin.claimTask(t.number), 409, /claimed by alice/);
+  await alice.write(s.id, "docs.md", "# docs\n");
+  const r: any = await alice.submit(s.id);
+  assert.ok(["landed", "in_review", "verifying"].includes(r.status), r.status);
+  assert.ok((await alice.notifications(true)).some((n: any) => n.type === "mention"));
+  const tag = await admin.tag("v0.1.0", { message: "first" });
+  assert.equal(tag.name, "v0.1.0");
+  await admin.release({ tag: "v0.1.0", title: "First", notes: "hello" });
+  assert.equal((await admin.request("GET", "releases/v0.1.0")).title, "First");
+  // browse
+  const tree = await admin.request("GET", "tree");
+  assert.ok(tree.entries.length > 0);
+  const hist = await admin.request("GET", "history?limit=3");
+  assert.ok(hist.commits?.length ?? hist.length);
+  const found = await admin.request("GET", "search?q=" + encodeURIComponent("docs"));
+  assert.ok(found.total >= 0);
+  // registry: list, create from scratch (root only), fork with history
+  await rejects(alice.request("POST", "repos", { name: "fresh" }), 403);
+  const created = await fetch(`${URL_}/api/repos`, { method: "POST", headers: { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" }, body: JSON.stringify({ name: "scratch", description: "empty" }) });
+  assert.equal(created.status, 201);
+  const fork = await alice.request("POST", "repos", { name: "alice-fork", from: "default" });
+  assert.equal(fork.forkedFrom.repo, "default");
+  assert.ok(fork.token, "a fork returns an admin token for its creator");
+  const forked = as(fork.token, "alice-fork");
+  const fs0 = await forked.status();
+  assert.equal(fs0.rev, fork.forkedFrom.rev); // a pending check may still land upstream, so compare with the fork point
+  const fo = await forked.open({ goal: "diverge" });
+  await forked.write(fo.id, "only-in-fork.txt", "x\n");
+  assert.equal(((await forked.submit(fo.id)) as any).status, "landed");
+  assert.equal((await admin.status()).files.includes("only-in-fork.txt"), false, "upstream is untouched");
+  assert.ok((await admin.request("GET", "repos")).some((x: any) => x.name === "alice-fork"));
+  await rejects(alice.request("POST", "repos", { name: "alice-fork", from: "default" }), 409);
+});
+
 await step("provenance chain and audit log verify before restart", async () => {
   const p = await admin.request("GET", "provenance");
   assert.equal(p.chain.ok, true);

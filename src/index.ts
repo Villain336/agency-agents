@@ -7,9 +7,15 @@ import { shardOf } from "./shard.ts";
 import { DASHBOARD } from "./dashboard.ts";
 import { handleMcpRequest } from "./mcp.ts";
 import { Store } from "./store.ts";
+import { REPO_NAME, RegistryDO, type RepoEntry } from "./registry.ts";
+
+export { RegistryDO };
 
 export interface Env {
   REPO: DurableObjectNamespace<RepoDO>;
+  REGISTRY: DurableObjectNamespace<RegistryDO>;
+  /** static web UI (public/), served for every non-API path */
+  ASSETS: Fetcher;
   /** optional: large file contents are offloaded here */
   BLOBS?: R2Bucket;
   /** when set, every API call must carry a token; when unset the service runs in open dev mode */
@@ -44,6 +50,23 @@ export class RepoDO extends DurableObject<Env> {
   // ---- RPC (called by the Worker) ----
   async authenticate(token: string): Promise<Actor | null> {
     return this.repo.authenticate(token);
+  }
+  async revision() {
+    return this.repo.s.rev;
+  }
+  /** Fork support: history up to `rev` (files, commits, tags, releases). */
+  async snapshot(rev?: number) {
+    return this.repo.snapshot(rev);
+  }
+  /** Fork support: fill an empty repository with a copy of another's history. */
+  async initFromSnapshot(snap: ReturnType<Repo["snapshot"]>, from: { repo: string }) {
+    if (this.repo.s.rev !== 0 || this.repo.s.commits.length) throw new WeaveError("target repository is not empty", 409);
+    const keep = { identities: this.repo.s.identities, seq: this.repo.s.seq };
+    this.repo = Repo.fromSnapshot(snap, from);
+    this.repo.s.identities = keep.identities;
+    this.repo.s.seq = { ...this.repo.s.seq, identity: keep.seq.identity };
+    this.store.reset();
+    await this.persist();
   }
   async shardConfig(): Promise<{ shards: Record<string, string[]> }> {
     return { shards: this.repo.config.shards };
@@ -218,8 +241,66 @@ async function call(env: Env, repo: string, shard: string, method: string, path:
   );
 }
 
+const registry = (env: Env) => env.REGISTRY.get(env.REGISTRY.idFromName("registry"));
+
+/** GET/POST /api/repos: the repository index, creation and forking. Not scoped to one repository. */
+async function handleRepos(req: Request, env: Env, parts: string[]): Promise<Response> {
+  const reg = registry(env);
+  const [, name] = parts;
+  const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+  if (req.method === "GET") {
+    if (env.WEAVE_ADMIN_TOKEN && !(await authenticate(req, env, new URL(req.url).searchParams.get("repo") ?? "default")))
+      return json({ error: "authentication required" }, 401, { "www-authenticate": "Bearer" });
+    if (name) {
+      const e = await reg.get(name);
+      return e ? json(e) : json({ error: `no such repository: ${name}` }, 404);
+    }
+    return json(await reg.list());
+  }
+  if (req.method !== "POST" || name) return json({ error: "no route" }, 404);
+  const newName = String(body.name ?? "");
+  if (!REPO_NAME.test(newName)) return json({ error: "repository name must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}" }, 400);
+  if (newName.includes("~")) return json({ error: "invalid name" }, 400);
+  const open = !env.WEAVE_ADMIN_TOKEN;
+  let creator = "anonymous";
+  let isRoot = open;
+  const from = body.from ? String(body.from) : undefined;
+  if (!open) {
+    // creating from scratch needs the root token; forking needs read access to the source
+    const actor = await authenticate(req, env, from ?? new URL(req.url).searchParams.get("repo") ?? "default");
+    if (!actor) return json({ error: "authentication required" }, 401, { "www-authenticate": "Bearer" });
+    isRoot = actor.id === "root";
+    creator = actor.name;
+    if (!from && !isRoot) return json({ error: "forbidden: only the admin token can create a repository from scratch (fork an existing one instead)" }, 403);
+    if (from && !actor.scopes.includes("read")) return json({ error: "forbidden: reading the source repository is required to fork it" }, 403);
+  } else creator = String(body.agent ?? "anonymous");
+  if (await reg.get(newName)) return json({ error: `repository ${newName} already exists` }, 409);
+  if (!from && (await stubFor(env, newName, "main").revision()) > 0) return json({ error: `repository ${newName} already exists` }, 409);
+  const entry: RepoEntry = { name: newName, description: String(body.description ?? ""), createdBy: creator, createdAt: Date.now() };
+  if (from) {
+    if (Object.keys(await shardsOf(env, from)).length) return json({ error: "sharded repositories cannot be forked yet" }, 400);
+    const snap = await stubFor(env, from, "main").snapshot(body.rev);
+    if (!(await reg.register({ ...entry, forkedFrom: { repo: from, rev: snap.rev } }))) return json({ error: `repository ${newName} already exists` }, 409);
+    try {
+      await stubFor(env, newName, "main").initFromSnapshot(snap, { repo: from });
+    } catch (e) {
+      await reg.unregister(newName);
+      return json({ error: String((e as Error).message ?? e) }, e instanceof WeaveError ? e.status : 409);
+    }
+    entry.forkedFrom = { repo: from, rev: snap.rev };
+  } else if (!(await reg.register(entry))) return json({ error: `repository ${newName} already exists` }, 409);
+  // the creator gets an admin identity in the new repository (shown once)
+  let token: string | undefined;
+  if (!open && !isRoot) {
+    const r = await call(env, newName, "main", "POST", "identities", "", { id: "root", name: "root", kind: "admin", scopes: ALL_SCOPES, paths: [] }, { name: creator, kind: "admin" });
+    token = ((await r.json()) as any).token;
+  }
+  return json({ ...entry, token }, 201);
+}
+
 async function handleApi(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
+  if (url.pathname === "/api/repos" || url.pathname.startsWith("/api/repos/")) return handleRepos(req, env, url.pathname.split("/").filter(Boolean).slice(1));
   const repo = url.searchParams.get("repo") ?? "default";
   const parts = url.pathname.split("/").filter(Boolean).slice(1);
   const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
@@ -337,6 +418,7 @@ export default {
         return json({ error: String((e as Error)?.message ?? e) }, 500);
       }
     }
-    return new Response(DASHBOARD, { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (url.pathname === "/legacy") return new Response(DASHBOARD, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return env.ASSETS.fetch(req);
   },
 };

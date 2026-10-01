@@ -7,6 +7,7 @@
 //   node scripts/wv.ts preview ID | submit ID ["message"] | session ID | wait ID [seconds]
 //   node scripts/wv.ts conflicts ID                                  # show conflicts in readable form
 //   node scripts/wv.ts resolve ID lib.js ./merged.js                # resolve a conflicted path by supplying the final merged file
+//   node scripts/wv.ts open "goal" paths... --task N | tasks | task next|claim N|new "title"|N | inbox | tag [name] | claim-review ID
 //   node scripts/wv.ts queue | pack ID | review ID approve|reject ["note"] | comment ID path line "text"
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,7 +35,7 @@ function showConflicts(s: any) {
 try {
   switch (cmd) {
     case "status": { const s: any = await w.status(); print({ rev: s.rev, files: s.files, policy: s.policy, checks: s.checks, protectedPaths: s.protectedPaths, liveSessions: s.sessions }); break; }
-    case "open": { const [goal, ...paths] = a; const s: any = await w.open({ goal, intent: paths, id: flag("id") }); print(s.id); if (s.warnings?.length) console.error("warnings:", s.warnings.join("; ")); break; }
+    case "open": { const id = flag("id"), task = flag("task"); const [goal, ...paths] = a; const s: any = await w.open({ goal, intent: paths, id, taskNumber: task ? Number(task) : undefined }); print(s.id); if (s.warnings?.length) console.error("warnings:", s.warnings.join("; ")); break; }
     case "cat": { const sid = flag("session"); let c: string | null; if (sid) c = await w.read(sid, a[0]); else { const r = await w.readTrunkAt(a[0]); c = r.content; remember(a[0], r.rev); } process.stdout.write(c ?? ""); break; }
     case "put": { const [id, path, file] = a; await w.write(id, path, readFileSync(file, "utf8"), revs[path]); print("ok"); break; }
     case "del": { await w.write(a[0], a[1], null); print("ok"); break; }
@@ -48,8 +49,13 @@ try {
     case "pack": { const p: any = await w.reviewPack(a[0]); if (p.warnings?.length) print("WARNINGS (read these first):\n- " + p.warnings.join("\n- ")); print({ goal: p.goal, agent: p.agent, status: p.status, risk: p.risk, stats: p.stats, behindBy: p.behindBy, evidence: p.evidence, comments: p.comments }); for (const f of p.files) print(f.patch); break; }
     case "review": { const r = await w.review(a[0], a[1] === "approve", a[2]); print({ status: r.status }); break; }
     case "comment": { await w.comment(a[0], { path: a[1], line: Number(a[2]), body: a[3] }); print("ok"); break; }
+    case "tasks": print(await w.tasks({ status: flag("status"), label: flag("label"), q: flag("q") })); break;
+    case "task": { const [sub, ...r] = a; if (sub === "new") print(await w.createTask({ title: r[0], body: r[1], priority: flag("priority"), labels: flag("labels")?.split(",") })); else if (sub === "next") print(await w.nextTask(flag("labels")?.split(","))); else if (sub === "claim") print(await w.claimTask(Number(r[0]))); else if (sub === "release") print(await w.releaseTask(Number(r[0]))); else if (sub === "close") print(await w.closeTask(Number(r[0]))); else if (sub === "comment") print(await w.commentTask(Number(r[0]), r[1])); else print(await w.task(Number(sub))); break; }
+    case "inbox": print(await w.notifications(!a.includes("--all"))); break;
+    case "tag": print(a[0] ? await w.tag(a[0], { message: a[1] }) : await w.tags()); break;
+    case "claim-review": print(await w.claimReview(a[0])); break;
     case "history": print(await w.history(Number(a[0] ?? 20))); break;
-    default: console.error("commands: status open cat put del preview submit session conflicts resolve wait queue pack review comment history"); process.exit(2);
+    default: console.error("commands: status open cat put del preview submit session conflicts resolve wait queue pack review comment history tasks task inbox tag claim-review"); process.exit(2);
   }
 } catch (e) {
   console.error((e instanceof WeaveError ? `error ${e.status}: ` : "error: ") + (e as Error).message);

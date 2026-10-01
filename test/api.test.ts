@@ -83,3 +83,25 @@ test("null optional fields (as sent by the Python SDK) mean 'not provided'", () 
   call(repo, "POST", "sessions/s/file", { path: "a.ts", content: "2", basedOn: null });
   assert.equal(call(repo, "POST", "sessions/s/submit", { message: null }).status, "landed");
 });
+
+test("forge routes: tasks, next, claims, notifications, tags, releases", () => {
+  const repo = new Repo();
+  repo.seed({ "a.ts": "1" });
+  const t = call(repo, "POST", "tasks", { agent: "alice", title: "Fix it", body: "cc @bot", priority: "high" });
+  assert.equal(t.number, 1);
+  assert.equal(call(repo, "GET", "tasks/next").task.number, 1);
+  const s = call(repo, "POST", "sessions", { agent: "bot", goal: "fix", taskNumber: 1, id: "s1" });
+  assert.equal(s.session.taskNumber, 1);
+  assert.equal(call(repo, "GET", "tasks/1").status, "claimed");
+  assert.throws(() => call(repo, "POST", "tasks/1/claim", { agent: "other" }), /claimed by bot/);
+  call(repo, "POST", "sessions/s1/file", { path: "a.ts", content: "2" });
+  assert.equal(call(repo, "POST", "sessions/s1/submit", {}).status, "landed");
+  assert.equal(call(repo, "GET", "tasks/1").status, "done");
+  assert.equal(call(repo, "GET", "notifications?as=bot&unread=1").length, 1);
+  assert.deepEqual(call(repo, "POST", "notifications/read", { agent: "bot", all: true }), { marked: 1 });
+  call(repo, "POST", "tags", { agent: "alice", name: "v1" });
+  call(repo, "POST", "releases", { agent: "alice", tag: "v1", title: "One", notes: "n" });
+  assert.equal(call(repo, "GET", "releases/v1").title, "One");
+  assert.equal(call(repo, "GET", "tags").length, 1);
+  assert.deepEqual(requiredScopes("POST", ["sessions", "s1", "claim-review"]), ["review"]);
+});

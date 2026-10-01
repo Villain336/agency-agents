@@ -3,7 +3,7 @@
 //   refs/heads/main           -> open a session, write the edits, submit() (3-way merge on trunk)
 import type { Actor, Repo } from "../repo.ts";
 import { concat, ZERO_SHA } from "./bytes.ts";
-import { flattenTree, GitView, MAIN_REF, OPEN_STATUSES, parseCommit, SESSION_PREFIX, type Lookup } from "./objects.ts";
+import { flattenTree, GitView, MAIN_REF, OPEN_STATUSES, parseCommit, SESSION_PREFIX, TAG_PREFIX, type Lookup } from "./objects.ts";
 import { parsePack, type GitObj } from "./pack.ts";
 import { FLUSH, pkt, pktText, readPkts, sideband } from "./pkt.ts";
 
@@ -124,7 +124,14 @@ export async function handleReceive(view: GitView, body: Uint8Array, agent: stri
           writeSession(repo, id, agent, p, actor);
         }
         results.push({ ref: c.ref, err: null });
-      } else results.push({ ref: c.ref, err: `only ${MAIN_REF} and ${SESSION_PREFIX}* can be pushed` });
+      } else if (c.ref.startsWith(TAG_PREFIX)) {
+        if (c.id === ZERO_SHA) throw new Error("tags are immutable and cannot be deleted");
+        const rev = view.revOf(c.id);
+        if (rev === undefined) throw new Error("a tag must point at a landed trunk commit");
+        mutated = true;
+        repo.createTag(c.ref.slice(TAG_PREFIX.length), { rev, tagger: agent });
+        results.push({ ref: c.ref, err: null });
+      } else results.push({ ref: c.ref, err: `only ${MAIN_REF}, ${TAG_PREFIX}* and ${SESSION_PREFIX}* can be pushed` });
     } catch (e) {
       results.push({ ref: c.ref, err: String((e as Error).message).replace(/\s+/g, " ") });
     }

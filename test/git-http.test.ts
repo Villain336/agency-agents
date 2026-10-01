@@ -296,3 +296,21 @@ test("empty repository can be cloned; routes outside the prefix and dumb protoco
     await srv.close();
   }
 });
+
+test("tags are advertised, fetched by clone, and a pushed tag becomes a Weave tag", async () => {
+  const repo = seeded();
+  repo.createTag("v1.0.0", { tagger: "alice" });
+  const srv = await serve(repo);
+  try {
+    const dir = await clone(srv, "w");
+    assert.equal(await git(dir, "tag", "-l"), "v1.0.0");
+    assert.equal(await git(dir, "rev-parse", "v1.0.0^{commit}"), new GitView(repo).mainSha());
+    await git(dir, "tag", "v1.1.0");
+    await git(dir, "push", "origin", "v1.1.0");
+    assert.equal(repo.s.tags["v1.1.0"].rev, repo.s.rev);
+    await assert.rejects(git(dir, "push", "origin", ":refs/tags/v1.0.0"), /immutable|deleted|rejected|failed/i);
+    assert.ok(repo.s.tags["v1.0.0"]);
+  } finally {
+    await srv.close();
+  }
+});

@@ -52,12 +52,30 @@ class Weave:
     def status(self): return self.request("GET", "status")
     def files(self): return self.request("GET", "trunk/files")["files"]
     def read_trunk(self, path: str): return self.request("GET", "trunk/file?path=" + urllib.parse.quote(path))["content"]
+    # tasks, notifications, tags, releases
+    def create_task(self, title: str, body: str = "", labels=None, priority: str = "normal", depends_on=None): return self.request("POST", "tasks", {"title": title, "body": body, "labels": labels or [], "priority": priority, "dependsOn": depends_on or []})
+    def tasks(self, status: Optional[str] = None, label: Optional[str] = None, q: Optional[str] = None):
+        params = {k: v for k, v in {"status": status, "label": label, "q": q}.items() if v}
+        return self.request("GET", "tasks" + ("?" + urllib.parse.urlencode(params) if params else ""))
+    def next_task(self, labels=None): return self.request("GET", "tasks/next" + ("?labels=" + ",".join(labels) if labels else ""))["task"]
+    def task(self, n: int): return self.request("GET", f"tasks/{n}")
+    def claim_task(self, n: int, lease_sec: Optional[int] = None): return self.request("POST", f"tasks/{n}/claim", {"leaseSec": lease_sec} if lease_sec else {})
+    def heartbeat_task(self, n: int, lease_sec: Optional[int] = None): return self.request("POST", f"tasks/{n}/heartbeat", {"leaseSec": lease_sec} if lease_sec else {})
+    def release_task(self, n: int): return self.request("POST", f"tasks/{n}/release", {})
+    def close_task(self, n: int): return self.request("POST", f"tasks/{n}/close", {})
+    def comment_task(self, n: int, body: str): return self.request("POST", f"tasks/{n}/comment", {"body": body})
+    def notifications(self, unread: bool = False): return self.request("GET", "notifications" + ("?unread=1" if unread else ""))
+    def mark_read(self, ids=None, all: bool = False): return self.request("POST", "notifications/read", {"ids": ids, "all": all})
+    def tag(self, name: str, rev: Optional[int] = None, message: str = ""): return self.request("POST", "tags", {"name": name, "rev": rev, "message": message})
+    def tags(self): return self.request("GET", "tags")
+    def release(self, tag: str, title: str = "", notes: str = "", prerelease: bool = False): return self.request("POST", "releases", {"tag": tag, "title": title or tag, "notes": notes, "prerelease": prerelease})
+    def claim_review(self, session: str, lease_sec: Optional[int] = None): return self.request("POST", f"sessions/{session}/claim-review", {"leaseSec": lease_sec} if lease_sec else {})
     def history(self, limit: int = 20): return self.request("GET", f"commits?limit={limit}")
     def provenance(self, rev: int): return self.request("GET", f"provenance/{rev}")
 
     # sessions
-    def open(self, goal: str, intent=None, id: Optional[str] = None, model: Optional[str] = None, base_rev: Optional[int] = None) -> dict:
-        return self.request("POST", "sessions", {"goal": goal, "intent": intent or [], "id": id, "model": model, "baseRev": base_rev})["session"]
+    def open(self, goal: str, intent=None, id: Optional[str] = None, model: Optional[str] = None, base_rev: Optional[int] = None, task: Optional[int] = None) -> dict:
+        return self.request("POST", "sessions", {"goal": goal, "intent": intent or [], "id": id, "model": model, "baseRev": base_rev, "taskNumber": task})["session"]
     def read(self, sid: str, path: str): return self.request("GET", f"sessions/{sid}/file?path=" + urllib.parse.quote(path))["content"]
     def write(self, sid: str, path: str, content: Optional[str], based_on: Optional[int] = None):
         return self.request("POST", f"sessions/{sid}/file", {"path": path, "content": content, "basedOn": based_on})

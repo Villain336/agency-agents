@@ -36,6 +36,9 @@ const populate = (r: Repo) => {
   r.open({ id: "t", agent: "c", goal: "g" });
   r.write("t", "n.ts", "new");
   r.write("t", "a.ts", null);
+  r.createTask("alice", { title: "t1", body: "hi @bot", labels: ["x"] });
+  r.createTag("v1", { tagger: "alice" });
+  r.createRelease({ tag: "v1", title: "One", notes: "n" }, "alice");
 };
 
 test("round trip: everything survives save + load, including blobs offloaded to the blob store", async () => {
@@ -55,6 +58,8 @@ test("round trip: everything survives save + load, including blobs offloaded to 
   assert.deepEqual(norm(loaded.s.config), norm(r.s.config));
   assert.deepEqual(norm(loaded.s.identities), norm(r.s.identities));
   assert.deepEqual(norm(loaded.s.outbox), norm(r.s.outbox));
+  for (const k of ["tasks", "tags", "releases", "notifications"] as const) assert.deepEqual(norm(loaded.s[k]), norm(r.s[k]), k);
+  assert.equal(loaded.s.notifications.length, 1);
   assert.equal(loaded.s.secrets.signingKey, r.s.secrets.signingKey);
   assert.equal(loaded.verifyChain().ok, true);
 });

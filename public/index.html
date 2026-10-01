@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="referrer" content="no-referrer">
+<title>Weave</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/css/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main" id="skip">Skip to content</a>
+<header class="topbar">
+  <div class="topbar-row">
+    <a class="logo" href="#/" aria-label="Weave home">
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" focusable="false"><path d="M4 7c6 0 6 18 12 18S22 7 28 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M4 25c6 0 6-18 12-18s6 18 12 18" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" opacity=".9"/></svg>
+      <span>Weave</span>
+    </a>
+    <div class="repo-switch">
+      <label class="sr-only" for="repo-select">Repository</label>
+      <select id="repo-select" aria-label="Repository"></select>
+    </div>
+    <form id="search-form" class="search" role="search">
+      <label class="sr-only" for="global-q">Search code</label>
+      <input id="global-q" type="search" placeholder="Search code" autocomplete="off" spellcheck="false">
+      <kbd aria-hidden="true">/</kbd>
+    </form>
+    <a id="bell" class="icon-btn bell" href="#/notifications" aria-label="Notifications" hidden><span id="bell-icon"></span><span id="bell-count" class="bell-count" hidden></span></a>
+    <button id="token-btn" class="btn btn-ghost token-btn" type="button" aria-haspopup="dialog"><span id="token-icon"></span><span id="token-label">Account</span></button>
+  </div>
+  <nav id="nav" class="mainnav" aria-label="Main">
+    <a href="#/" data-section="code">Code</a>
+    <a href="#/changes" data-section="changes">Changes</a>
+    <a href="#/tasks" data-section="tasks">Tasks</a>
+    <a href="#/commits" data-section="commits">Commits</a>
+    <a href="#/activity" data-section="activity">Activity</a>
+    <a href="#/releases" data-section="releases">Releases</a>
+    <a href="#/repos" data-section="repos">Repositories</a>
+    <a href="#/settings" data-section="settings">Settings</a>
+  </nav>
+</header>
+<main id="main" tabindex="-1"><noscript><p class="pad">Weave needs JavaScript to render its pages.</p></noscript></main>
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>
