@@ -12,7 +12,7 @@ export const openActor = (name = "anonymous"): Actor => ({ id: "open", name, kin
 export function requiredScopes(method: string, parts: string[]): Scope[] {
   const [a, , c, d] = parts;
   if (a === "identities" || a === "config" || a === "reset" || a === "import") return method === "GET" && a === "config" ? ["read"] : ["admin"];
-  if (a === "teams" && method === "POST") return ["admin"];
+  if ((a === "teams" && method === "POST") || a === "secrets") return ["admin"];
   if (a === "runner") return ["runner"];
   if (a === "sessions" && method === "POST") {
     if (c === "claim-review") return ["review"];

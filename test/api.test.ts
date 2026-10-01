@@ -120,3 +120,19 @@ test("teams routes and CODEOWNERS via config", () => {
   assert.equal(call(repo, "POST", "sessions/s/submit", {}).status, "in_review");
   assert.equal(call(repo, "POST", "sessions/s/review", { reviewer: "bo", approve: true, kind: "reviewer" }).status, "landed");
 });
+
+test("workflow, run and secret routes", () => {
+  const repo = new Repo();
+  repo.seed({ "a.ts": "1" });
+  call(repo, "POST", "config", { workflows: [{ name: "deploy", on: ["manual"], command: "make deploy", secrets: ["TOK"] }] });
+  call(repo, "POST", "secrets", { name: "TOK", value: "v" });
+  assert.deepEqual(call(repo, "GET", "secrets"), [{ name: "TOK" }]);
+  const run = call(repo, "POST", "workflows/deploy/run", { agent: "alice" });
+  assert.equal(call(repo, "GET", "runs/" + run.id).status, "queued");
+  assert.equal(call(repo, "GET", "runs").length, 1);
+  const claim = call(repo, "POST", "runner/claim", { runner: "r1" });
+  assert.deepEqual(claim.job.env, { TOK: "v" });
+  call(repo, "POST", `runner/jobs/${run.id}/result`, { runner: "r1", passed: true });
+  assert.equal(call(repo, "GET", "runs/" + run.id).status, "passed");
+  assert.deepEqual(requiredScopes("GET", ["secrets"]), ["admin"]);
+});

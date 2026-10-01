@@ -22,7 +22,7 @@ export interface StoreOptions {
 }
 
 const MAX_ROW = 1_900_000; // SQLite rows in Durable Objects are limited to ~2 MB
-const SMALL = ["identities", "comments", "jobs", "tasks", "tags", "releases", "teams"] as const;
+const SMALL = ["identities", "comments", "jobs", "tasks", "tags", "releases", "teams", "runs"] as const;
 const META = ["config", "secrets", "auditHead", "mirror", "seq", "rev", "reviewPaths"] as const;
 
 type Packed = { kind: 0 | 1 | 2; content: string | null; blob: string | null };
@@ -173,7 +173,7 @@ export class Store {
 
       // small collections + metadata: diff against the last written JSON
       const docs: [string, Record<string, unknown>][] = [
-        ["identities", st.identities], ["comments", st.comments], ["jobs", st.jobs], ["tasks", st.tasks], ["tags", st.tags], ["releases", st.releases], ["teams", st.teams],
+        ["identities", st.identities], ["comments", st.comments], ["jobs", st.jobs], ["tasks", st.tasks], ["tags", st.tags], ["releases", st.releases], ["teams", st.teams], ["runs", st.runs],
         ["notifications", Object.fromEntries(st.notifications.map((n) => [n.id, n]))],
         ["outbox", Object.fromEntries(st.outbox.map((o) => [o.id, o]))],
       ];

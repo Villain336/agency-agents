@@ -80,6 +80,39 @@ export interface Config {
   forkedFrom?: { repo: string; rev: number };
   /** required reviewers by path (CODEOWNERS semantics: the last matching rule wins); owners are identity names or `team:<name>` */
   owners?: OwnerRule[];
+  /** post-merge automation executed by runners */
+  workflows?: Workflow[];
+}
+
+export interface Workflow {
+  name: string;
+  /** landed: after each landing on trunk; tag: when a tag is created; manual: only via the API */
+  on: ("landed" | "tag" | "manual")[];
+  command: string;
+  timeoutMs?: number;
+  /** for `landed`: only when a changed path matches one of these CODEOWNERS-style patterns */
+  paths?: string[];
+  /** names of repository secrets delivered to this workflow's runs (never to check jobs) */
+  secrets?: string[];
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflow: string;
+  trigger: "landed" | "tag" | "manual";
+  rev: number;
+  ref?: string;
+  by: string;
+  command: string;
+  timeoutMs: number;
+  secrets: string[];
+  status: "queued" | "running" | "passed" | "failed";
+  createdAt: number;
+  claimedBy?: string;
+  leaseUntil?: number;
+  output?: string;
+  durationMs?: number;
+  finishedAt?: number;
 }
 
 export interface OwnerRule {
@@ -281,7 +314,7 @@ export interface Task {
   closedAt?: number;
 }
 
-export type NotificationType = "mention" | "task_assigned" | "task_commented" | "review_requested" | "change_landed" | "change_conflicted" | "change_commented";
+export type NotificationType = "mention" | "task_assigned" | "task_commented" | "review_requested" | "change_landed" | "change_conflicted" | "change_commented" | "workflow_failed";
 
 export interface Notification {
   id: string;
@@ -317,6 +350,7 @@ export interface State {
   rev: number;
   tasks: Record<string, Task>;
   teams: Record<string, Team>;
+  runs: Record<string, WorkflowRun>;
   notifications: Notification[];
   tags: Record<string, Tag>;
   releases: Record<string, Release>;
@@ -330,10 +364,10 @@ export interface State {
   jobs: Record<string, Job>;
   outbox: OutboxItem[];
   config: Config;
-  secrets: { signingKey: string };
+  secrets: { signingKey: string; /** repository secrets for workflow runs */ env?: Record<string, string> };
   auditHead: string;
   mirror: { lastRev: number };
-  seq: { event: number; comment: number; job: number; outbox: number; identity: number; task: number; notification: number; verifyStamp?: number };
+  seq: { event: number; comment: number; job: number; outbox: number; identity: number; task: number; notification: number; run?: number; verifyStamp?: number };
   /** legacy mirror of config.reviewPaths, kept for older clients */
   reviewPaths: string[];
 }
@@ -349,7 +383,7 @@ export class WeaveError extends Error {
 export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [], merge: { lists: true, union: [] } });
 
 export const emptyState = (): State => ({
-  rev: 0, tasks: {}, teams: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
+  rev: 0, tasks: {}, teams: {}, runs: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
   config: defaultConfig(), secrets: { signingKey: randomToken("sk", 32) }, auditHead: "", mirror: { lastRev: 0 },
   seq: { event: 0, comment: 0, job: 0, outbox: 0, identity: 0, task: 0, notification: 0 }, reviewPaths: [],
 });
@@ -492,6 +526,7 @@ export class Repo {
     if (patch.policy) c.policy = patch.policy;
     if (patch.merge) c.merge = { lists: patch.merge.lists !== false, union: patch.merge.union ?? [] };
     if (patch.mirror !== undefined) c.mirror = patch.mirror;
+    if (patch.workflows) c.workflows = patch.workflows.map((w) => ({ name: w.name, on: w.on, command: w.command, timeoutMs: w.timeoutMs, paths: w.paths, secrets: w.secrets }));
     if (patch.owners) c.owners = patch.owners.map((o) => ({ pattern: String(o.pattern), owners: o.owners.map(String) }));
     if (patch.webhooks)
       c.webhooks = patch.webhooks.map((w, i) => ({ id: w.id ?? `wh${i + 1}`, url: w.url, secret: w.secret ?? "", events: w.events?.length ? w.events : ["*"] }));
@@ -940,6 +975,7 @@ export class Repo {
     }
     if (wasWaiting) this.notify(s.agent, "change_landed", `your change landed as r${s.landedRev}: ${msg}`, { kind: "session", id: s.id });
     if (changes[CONFIG_FILE]) this.applyConfigFile(changes[CONFIG_FILE]!);
+    this.fireWorkflows("landed", s.landedRev, s.agent, Object.keys(changes));
     this.log("landed", `${s.agent} landed r${s.landedRev}${merged ? " (auto-merged with concurrent work)" : ""}: ${msg}`, s);
     this.pump();
     return { status: "landed" as Status, rev: s.landedRev, risk };
@@ -1091,13 +1127,14 @@ export class Repo {
   }
 
   /** A runner pulls the next job. Expired leases are requeued first. */
-  claimJob(runner: string, leaseMs = 300_000): (Job & { files: Record<string, string> }) | null {
+  claimJob(runner: string, leaseMs = 300_000): (Partial<Job> & { id: string; check: string; command: string; timeoutMs: number; files: Record<string, string>; env?: Record<string, string> }) | null {
     const t = this.now();
     for (const j of Object.values(this.s.jobs)) if (j.status === "running" && (j.leaseUntil ?? 0) < t) j.status = "queued";
+    for (const w of Object.values(this.s.runs)) if (w.status === "running" && (w.leaseUntil ?? 0) < t) (w.status = "queued"), (w.claimedBy = undefined);
     const next = Object.values(this.s.jobs)
       .filter((j) => j.status === "queued" && this.s.sessions[j.sessionId]?.status === "verifying")
       .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))[0];
-    if (!next) return null;
+    if (!next) return this.claimRun(runner, leaseMs);
     next.status = "running";
     next.claimedBy = runner;
     next.leaseUntil = t + leaseMs;
@@ -1105,8 +1142,75 @@ export class Repo {
     for (const [p, c] of Object.entries(next.overlay)) c === null ? delete files[p] : (files[p] = c);
     return { ...next, files };
   }
+  private claimRun(runner: string, leaseMs: number) {
+    const w = Object.values(this.s.runs).filter((x) => x.status === "queued").sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))[0];
+    if (!w) return null;
+    w.status = "running";
+    w.claimedBy = runner;
+    w.leaseUntil = this.now() + leaseMs;
+    const env: Record<string, string> = {};
+    for (const n of w.secrets) if (this.s.secrets.env?.[n] !== undefined) env[n] = this.s.secrets.env[n];
+    return { id: w.id, check: w.workflow, command: w.command, timeoutMs: w.timeoutMs, rev: w.rev, files: this.filesAt(w.rev), env: w.secrets.length ? env : undefined };
+  }
 
+  // ---- workflows (post-merge automation) ----------------------------------------
+  listRuns(f: { workflow?: string; status?: WorkflowRun["status"] } = {}): WorkflowRun[] {
+    return Object.values(this.s.runs).filter((r) => (!f.workflow || r.workflow === f.workflow) && (!f.status || r.status === f.status)).sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)));
+  }
+  getRun(id: string): WorkflowRun {
+    const r = this.s.runs[id];
+    if (!r) throw new WeaveError(`no such run: ${id}`, 404);
+    return r;
+  }
+  private queueRun(w: Workflow, trigger: WorkflowRun["trigger"], rev: number, by: string, ref?: string): WorkflowRun {
+    const n = (this.s.seq.run = (this.s.seq.run ?? 0) + 1);
+    const run: WorkflowRun = { id: `w${n}`, workflow: w.name, trigger, rev, ref, by, command: w.command, timeoutMs: w.timeoutMs ?? 600_000, secrets: w.secrets ?? [], status: "queued", createdAt: this.now() };
+    this.s.runs[run.id] = run;
+    const all = Object.values(this.s.runs);
+    if (all.length > 200) for (const old of all.filter((x) => x.status === "passed" || x.status === "failed").sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))).slice(0, all.length - 200)) delete this.s.runs[old.id];
+    this.log("workflow_queued", `workflow ${w.name} queued for r${rev} (${trigger})`, undefined, by);
+    return run;
+  }
+  private fireWorkflows(trigger: "landed" | "tag", rev: number, by: string, paths: string[] = [], ref?: string) {
+    for (const w of this.s.config.workflows ?? []) {
+      if (!w.on.includes(trigger)) continue;
+      if (trigger === "landed" && w.paths?.length && !paths.some((p) => w.paths!.some((g) => matchOwnerPattern(g, p)))) continue;
+      this.queueRun(w, trigger, rev, by, ref);
+    }
+  }
+  runWorkflow(name: string, by: string, rev?: number): WorkflowRun {
+    const w = (this.s.config.workflows ?? []).find((x) => x.name === name);
+    if (!w) throw new WeaveError(`no such workflow: ${name}`, 404);
+    if (!w.on.includes("manual")) throw new WeaveError(`workflow ${name} is not triggered manually`, 409);
+    return this.queueRun(w, "manual", rev ?? this.s.rev, by);
+  }
+
+  // ---- repository secrets (names are listable, values never leave the server except into workflow runs) ----
+  setSecret(name: string, value: string, by: string) {
+    if (!/^[A-Z_][A-Z0-9_]{0,63}$/.test(name)) throw new WeaveError("invalid secret name: use UPPER_SNAKE_CASE");
+    (this.s.secrets.env ??= {})[name] = String(value);
+    this.log("secret", `${by} set secret ${name}`, undefined, by);
+  }
+  deleteSecret(name: string) {
+    if (this.s.secrets.env) delete this.s.secrets.env[name];
+  }
+  listSecrets(): { name: string }[] {
+    return Object.keys(this.s.secrets.env ?? {}).sort().map((name) => ({ name }));
+  }
   jobResult(id: string, runner: string, r: { passed: boolean; output?: string; durationMs?: number; previewUrl?: string }) {
+    const run = this.s.runs[id];
+    if (run) {
+      if (run.status !== "running") throw new WeaveError(`run ${id} is ${run.status}`, 409);
+      if (run.claimedBy && run.claimedBy !== runner) throw new WeaveError(`run ${id} is leased to another runner`, 403);
+      run.status = r.passed ? "passed" : "failed";
+      run.output = clip(r.output ?? "");
+      run.durationMs = r.durationMs;
+      run.finishedAt = this.now();
+      this.log(r.passed ? "workflow_passed" : "workflow_failed", `${runner} ran workflow ${run.workflow} on r${run.rev}: ${r.passed ? "passed" : "FAILED"}`, undefined, runner);
+      const author = this.s.commits.find((c) => c.rev === run.rev)?.agent;
+      if (!r.passed && author && author !== "system") this.notify(author, "workflow_failed", `workflow ${run.workflow} failed on r${run.rev}`, { kind: "session", id: this.s.commits.find((c) => c.rev === run.rev)?.sessionId ?? "" });
+      return { job: run as any, session: "n/a" };
+    }
     const j = this.s.jobs[id];
     if (!j) throw new WeaveError(`no such job: ${id}`, 404);
     if (j.status !== "running") throw new WeaveError(`job ${id} is ${j.status}`, 409);
@@ -1545,6 +1649,7 @@ export class Repo {
     const t: Tag = { name, rev, message: o.message ?? "", tagger: o.tagger, ts: this.now() };
     this.s.tags[name] = t;
     this.log("tag", `${o.tagger} tagged ${name} at r${rev}`, undefined, o.tagger);
+    this.fireWorkflows("tag", rev, o.tagger, [], name);
     return t;
   }
   listTags(): Tag[] {
@@ -1616,6 +1721,11 @@ export class Repo {
     if (j.merge !== undefined) {
       if (!j.merge || typeof j.merge !== "object" || (j.merge.union !== undefined && !strs(j.merge.union))) return { error: "weave.json: merge must be {lists?, union?: string[]}" };
       patch.merge = { lists: j.merge.lists !== false, union: j.merge.union ?? [] };
+    }
+    if (j.workflows !== undefined) {
+      const ok = (w: any) => w && /^[\w.-]{1,40}$/.test(w.name ?? "") && typeof w.command === "string" && w.command.trim() && Array.isArray(w.on) && w.on.length && w.on.every((x: unknown) => ["landed", "tag", "manual"].includes(x as string)) && (w.paths === undefined || strs(w.paths)) && (w.secrets === undefined || strs(w.secrets)) && (w.timeoutMs === undefined || typeof w.timeoutMs === "number");
+      if (!Array.isArray(j.workflows) || !j.workflows.every(ok)) return { error: "weave.json: workflows must be a list of {name, on: [landed|tag|manual], command, paths?, secrets?, timeoutMs?}" };
+      patch.workflows = j.workflows;
     }
     if (j.owners !== undefined) {
       if (!Array.isArray(j.owners) || !j.owners.every((o: any) => o && typeof o.pattern === "string" && strs(o.owners))) return { error: "weave.json: owners must be a list of {pattern, owners: string[]}" };

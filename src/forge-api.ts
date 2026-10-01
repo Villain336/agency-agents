@@ -40,6 +40,14 @@ export function forgeRoute(c: Ctx): unknown {
     if (method === "GET") return repo.notificationsFor(me(c), { unread: url.searchParams.get("unread") === "1" });
     if (id === "read") return repo.markRead(me(c), { ids: body.ids, all: !!body.all });
   }
+  if (a === "runs" && method === "GET") return id ? repo.getRun(id) : repo.listRuns({ workflow: q("workflow"), status: q("status") as any });
+  if (a === "workflows" && method === "POST" && id && sub === "run") return repo.runWorkflow(id, me(c), body.rev);
+  if (a === "workflows" && method === "GET") return repo.config.workflows ?? [];
+  if (a === "secrets") {
+    if (method === "GET") return repo.listSecrets();
+    if (id && sub === "delete") return (repo.deleteSecret(id), { ok: true });
+    return (repo.setSecret(String(body.name ?? ""), String(body.value ?? ""), me(c)), { ok: true, name: body.name });
+  }
   if (a === "teams") {
     if (method === "GET") return id ? repo.getTeam(id) : repo.listTeams();
     if (!id) return repo.createTeam(String(body.name ?? ""), body.members ?? [], me(c), body.description);
