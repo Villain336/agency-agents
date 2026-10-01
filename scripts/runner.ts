@@ -66,8 +66,7 @@ async function handle(job: any) {
       writeFileSync(dest, c);
     }
     const r = await run(job.command, dir, job.timeoutMs);
-    const id = job.shard && job.shard !== "main" ? job.id : job.id;
-    await api("POST", `runner/jobs/${id}/result`, { runner: name, passed: r.passed, output: r.output, durationMs: Date.now() - t0 });
+    await api("POST", `runner/jobs/${job.id}/result`, { runner: name, passed: r.passed, output: r.output, durationMs: Date.now() - t0 });
     console.log(`[${name}] ${job.id} ${job.check}: ${r.passed ? "PASS" : "FAIL"} (${Date.now() - t0}ms)`);
   } finally {
     rmSync(dir, { recursive: true, force: true });

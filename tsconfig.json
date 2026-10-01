@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test", "scripts"]
+  "include": ["src", "test", "scripts", "sdk/ts", "test-e2e"]
 }

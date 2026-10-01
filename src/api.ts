@@ -106,8 +106,8 @@ export function route(c: Ctx): unknown {
       const j = repo.claimJob(c.actor.open ? String(body.runner ?? "runner") : c.actor.name);
       return j ? { job: j } : { job: null };
     }
-    if (a === "runner" && id === "jobs" && act === "result")
-      return repo.jobResult(sid, c.actor.open ? String(body.runner ?? "runner") : c.actor.name, { passed: !!body.passed, output: body.output, durationMs: body.durationMs, previewUrl: body.previewUrl });
+    if (a === "runner" && id === "jobs" && sid === "result")
+      return repo.jobResult(sub, c.actor.open ? String(body.runner ?? "runner") : c.actor.name, { passed: !!body.passed, output: body.output, durationMs: body.durationMs, previewUrl: body.previewUrl });
     if (a === "sessions" && !id) {
       const agent = c.actor.open ? String(body.agent ?? "anonymous") : c.actor.name;
       return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent, actor: c.actor, model: body.model, prompt: body.prompt });

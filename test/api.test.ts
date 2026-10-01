@@ -61,3 +61,16 @@ test("state/jobs responses never leak token hashes or webhook secrets", () => {
   assert.ok(!blob.includes("tokenHash"));
   assert.ok(!blob.includes(repo.s.secrets.signingKey));
 });
+
+test("runner routes: claim a job and report its result through the router", () => {
+  const repo = new Repo();
+  repo.seed({ "b.ts": "x" });
+  repo.setConfig({ checks: [{ name: "unit", command: "t" }] });
+  call(repo, "POST", "sessions", { id: "s", agent: "a", goal: "g" });
+  call(repo, "POST", "sessions/s/file", { path: "b.ts", content: "y" });
+  assert.equal(call(repo, "POST", "sessions/s/submit").status, "verifying");
+  const { job } = call(repo, "POST", "runner/claim", { runner: "r1" });
+  assert.equal(job.files["b.ts"], "y");
+  call(repo, "POST", `runner/jobs/${job.id}/result`, { runner: "r1", passed: true, output: "ok" });
+  assert.equal(repo.session("s").status, "landed");
+});
