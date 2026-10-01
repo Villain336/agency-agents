@@ -318,7 +318,9 @@ await step("large files are offloaded to R2 and land correctly", async () => {
   await admin.configure({ checks: [] });
   const s = await alice.open({ goal: "add big file", intent: ["big.txt"] });
   await alice.write(s.id, "big.txt", big);
-  assert.equal((await alice.submit(s.id)).status, "landed");
+  const sub = await alice.submit(s.id);
+  assert.equal(sub.status, "in_review"); // a 4,000-line addition is not low risk
+  assert.equal((await hana.review(s.id, true)).status, "landed");
   assert.equal(await alice.readTrunk("big.txt"), big);
 });
 
