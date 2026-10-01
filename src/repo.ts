@@ -5,7 +5,7 @@
 // runners), a semantic-interaction gate, and risk-tiered review. Every landed commit carries a
 // signed, hash-chained provenance record.
 
-import { canonical, hmacSha256, randomToken, sha256 } from "./crypto.ts";
+import { canonical, hmacSha256, randomToken, sha256, sha256Bytes, toHex } from "./crypto.ts";
 import { diffStat, fileDiff, type FileDiff } from "./diff.ts";
 import { diffHunks, merge3, resolveSegments, splitLines, type MergeOptions, type Choice, type Segment } from "./merge.ts";
 import { DEFAULT_POLICY, scoreRisk, type Need, type Policy, type RiskReport } from "./review.ts";
@@ -113,6 +113,40 @@ export interface WorkflowRun {
   output?: string;
   durationMs?: number;
   finishedAt?: number;
+}
+
+export interface PackageFile {
+  name: string;
+  size: number;
+  sha256: string;
+  contentBase64?: string;
+}
+export interface PackageVersion {
+  name: string;
+  version: string;
+  description: string;
+  files: PackageFile[];
+  publishedBy: string;
+  publishedAt: number;
+  yanked?: string;
+}
+const PKG_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]{0,99}$/;
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+export const PKG_MAX_BYTES = 1_000_000;
+function semverCmp(a: string, b: string): number {
+  const x = SEMVER.exec(a)!, y = SEMVER.exec(b)!;
+  for (let i = 1; i <= 3; i++) if (+x[i] !== +y[i]) return +x[i] - +y[i];
+  if (!x[4] || !y[4]) return x[4] ? -1 : y[4] ? 1 : 0;
+  const pa = x[4].split("."), pb = y[4].split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if (pa[i] === undefined) return -1;
+    if (pb[i] === undefined) return 1;
+    const na = /^\d+$/.test(pa[i]), nb = /^\d+$/.test(pb[i]);
+    if (na && nb && +pa[i] !== +pb[i]) return +pa[i] - +pb[i];
+    if (na !== nb) return na ? -1 : 1;
+    if (!na && pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
 }
 
 export interface OwnerRule {
@@ -351,6 +385,7 @@ export interface State {
   tasks: Record<string, Task>;
   teams: Record<string, Team>;
   runs: Record<string, WorkflowRun>;
+  packages: Record<string, PackageVersion>;
   notifications: Notification[];
   tags: Record<string, Tag>;
   releases: Record<string, Release>;
@@ -383,7 +418,7 @@ export class WeaveError extends Error {
 export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [], merge: { lists: true, union: [] } });
 
 export const emptyState = (): State => ({
-  rev: 0, tasks: {}, teams: {}, runs: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
+  rev: 0, tasks: {}, teams: {}, runs: {}, packages: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
   config: defaultConfig(), secrets: { signingKey: randomToken("sk", 32) }, auditHead: "", mirror: { lastRev: 0 },
   seq: { event: 0, comment: 0, job: 0, outbox: 0, identity: 0, task: 0, notification: 0 }, reviewPaths: [],
 });
@@ -1151,6 +1186,64 @@ export class Repo {
     const env: Record<string, string> = {};
     for (const n of w.secrets) if (this.s.secrets.env?.[n] !== undefined) env[n] = this.s.secrets.env[n];
     return { id: w.id, check: w.workflow, command: w.command, timeoutMs: w.timeoutMs, rev: w.rev, files: this.filesAt(w.rev), env: w.secrets.length ? env : undefined };
+  }
+
+  // ---- packages (a small generic registry; versions are immutable) -----------------
+  publishPackage(o: { name: string; version: string; description?: string; files: { name: string; contentBase64: string }[] }, by: string): PackageVersion {
+    if (!PKG_NAME.test(o.name ?? "")) throw new WeaveError("invalid package name: lowercase letters, digits, '.', '_', '-', optional @scope/");
+    if (!SEMVER.test(o.version ?? "")) throw new WeaveError("version must be semver, e.g. 1.2.3 or 1.2.3-beta.1");
+    if (!Array.isArray(o.files) || !o.files.length) throw new WeaveError("a package needs at least one file");
+    const key = `${o.name}@${o.version}`;
+    if (this.s.packages[key]) throw new WeaveError(`${key} already exists (published versions are immutable)`, 409);
+    let total = 0;
+    const files = o.files.map((f) => {
+      if (!/^[\w.@+-][\w.@+-]{0,199}$/.test(f.name ?? "") || f.name.includes("..")) throw new WeaveError(`invalid file name: ${f.name}`);
+      if (typeof f.contentBase64 !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(f.contentBase64) || f.contentBase64.length % 4) throw new WeaveError(`${f.name}: content must be base64`);
+      const size = Math.floor((f.contentBase64.length * 3) / 4) - (f.contentBase64.endsWith("==") ? 2 : f.contentBase64.endsWith("=") ? 1 : 0);
+      total += size;
+      if (total > PKG_MAX_BYTES) throw new WeaveError(`package too large: ${PKG_MAX_BYTES} bytes max per version`, 413);
+      const bytes = Uint8Array.from(atob(f.contentBase64), (c) => c.charCodeAt(0));
+      return { name: f.name, size, sha256: toHex(sha256Bytes(bytes)), contentBase64: f.contentBase64 };
+    });
+    if (new Set(files.map((f) => f.name)).size !== files.length) throw new WeaveError("duplicate file names");
+    const pv: PackageVersion = { name: o.name, version: o.version, description: o.description ?? "", files, publishedBy: by, publishedAt: this.now() };
+    this.s.packages[key] = pv;
+    this.log("package", `${by} published ${key}`, undefined, by);
+    return this.stripBytes(pv);
+  }
+  private stripBytes(pv: PackageVersion): PackageVersion {
+    return { ...pv, files: pv.files.map(({ contentBase64: _c, ...f }) => f) };
+  }
+  private versionsOf(name: string): PackageVersion[] {
+    return Object.values(this.s.packages).filter((p) => p.name === name).sort((a, b) => semverCmp(b.version, a.version));
+  }
+  listPackages(): { name: string; latest: string | undefined; versions: string[]; description: string; updatedAt: number }[] {
+    const names = [...new Set(Object.values(this.s.packages).map((p) => p.name))].sort();
+    return names.map((name) => {
+      const vs = this.versionsOf(name);
+      const live = vs.filter((v) => !v.yanked);
+      const latest = (live.find((v) => !SEMVER.exec(v.version)![4]) ?? live[0])?.version;
+      return { name, latest, versions: vs.map((v) => v.version), description: vs.find((v) => v.description)?.description ?? "", updatedAt: Math.max(...vs.map((v) => v.publishedAt)) };
+    });
+  }
+  getPackageVersion(name: string, version: string): PackageVersion {
+    const pv = this.s.packages[`${name}@${version}`];
+    if (!pv) throw new WeaveError(`no such version: ${name}@${version}`, 404);
+    return this.stripBytes(pv);
+  }
+  packageFile(name: string, version: string, file: string): { name: string; size: number; sha256: string; contentBase64: string } {
+    const pv = this.s.packages[`${name}@${version}`];
+    if (!pv) throw new WeaveError(`no such version: ${name}@${version}`, 404);
+    const f = pv.files.find((x) => x.name === file);
+    if (!f) throw new WeaveError(`no such file: ${file}`, 404);
+    return { name: f.name, size: f.size, sha256: f.sha256, contentBase64: f.contentBase64! };
+  }
+  yankPackageVersion(name: string, version: string, by: string, reason = "yanked") {
+    const pv = this.s.packages[`${name}@${version}`];
+    if (!pv) throw new WeaveError(`no such version: ${name}@${version}`, 404);
+    pv.yanked = reason;
+    this.log("package", `${by} yanked ${name}@${version}: ${reason}`, undefined, by);
+    return this.stripBytes(pv);
   }
 
   // ---- workflows (post-merge automation) ----------------------------------------

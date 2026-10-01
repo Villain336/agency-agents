@@ -136,3 +136,16 @@ test("workflow, run and secret routes", () => {
   assert.equal(call(repo, "GET", "runs/" + run.id).status, "passed");
   assert.deepEqual(requiredScopes("GET", ["secrets"]), ["admin"]);
 });
+
+test("package routes: publish, list, get version, download file, yank", () => {
+  const repo = new Repo();
+  const content = Buffer.from("hello").toString("base64");
+  call(repo, "POST", "packages", { agent: "ci", name: "@acme/lib", version: "1.0.0", files: [{ name: "lib.txt", contentBase64: content }] });
+  assert.equal(call(repo, "GET", "packages")[0].latest, "1.0.0");
+  const name = encodeURIComponent("@acme/lib");
+  assert.equal(call(repo, "GET", `packages/${name}`).releases.length, 1);
+  assert.equal(call(repo, "GET", `packages/${name}/1.0.0`).files[0].size, 5);
+  assert.equal(call(repo, "GET", `packages/${name}/1.0.0/files/lib.txt`).contentBase64, content);
+  call(repo, "POST", `packages/${name}/1.0.0/yank`, { reason: "bad" });
+  assert.equal(call(repo, "GET", "packages")[0].latest, undefined);
+});
