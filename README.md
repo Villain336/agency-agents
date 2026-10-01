@@ -30,6 +30,9 @@ working for days. Weave is designed for many agents working for minutes.
 | Duplicate review work | **Review claims**: a reviewer takes a change with a lease so others don't repeat it. |
 | Repos, forks | **Registry** (`/api/repos`): create, list, and **fork** with full history copied (own keys, own identities). |
 | Code browser, blame, search | **Browse API**: tree, blob, history, commit, diff, blame, search, readme, stats. |
+| CODEOWNERS, teams | **Teams** and required code owners: rules from a `CODEOWNERS` file, `weave.json` or the config (last match wins, `team:<name>` expands to members); owned paths cannot land without an owner's approval, whatever the risk score. |
+| GitHub Actions / Forgejo Actions | **Workflows**: post-merge runs (on landing, on tag, or manual) executed by the same pull-based runners, with path filters and **repository secrets** that only workflow runs (never agent-controlled check jobs) receive. |
+| Package registry | **Packages**: immutable semver versions with files, sha256, yank, and semver-aware `latest` (generic registry, 1 MB per version; not npm/PyPI wire-compatible yet). |
 | Webhooks, API, SDKs | Signed webhooks with retries, REST API, **MCP server**, TypeScript and Python SDKs, long-poll event stream. |
 
 Each repo shard is one **Durable Object** (single-threaded, strongly consistent, SQLite storage;
@@ -174,8 +177,9 @@ All routes accept `?repo=<name>` (default `default`) and `Authorization: Bearer 
 - **Hot lines still serialize.** Sixteen agents all editing one line is the worst case for optimistic merging.
   List merging and union fix the common shapes (exports, imports, appended tests); other hot spots (one
   function everyone rewrites) still conflict, and agents re-apply their change. See docs/SWARM-RUN.md.
-- Not yet: organizations/teams/SSO, projects boards, packages, Pages, a workflow engine and hosted runners
-  (see docs/ROADMAP.md). Forks copy history but there are no cross-repo pull requests yet; forked history keeps
+- Not yet: SSO/OIDC, Pages, hosted runners (bring your own; Cloudflare Containers is the natural home), npm/PyPI-compatible
+  package protocols, package storage in R2 (packages live in Durable Object SQLite, 1 MB per version), a wiki beyond
+  markdown files in the repo (see docs/ROADMAP.md). Forks copy history but there are no cross-repo pull requests yet; forked history keeps
   the upstream's provenance hashes, but signatures were made with the upstream's key.
 
 ## Layout

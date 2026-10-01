@@ -364,6 +364,33 @@ await step("forge: tasks with claims, notifications, tags, releases, browse, reg
   await rejects(alice.request("POST", "repos", { name: "alice-fork", from: "default" }), 409);
 });
 
+await step("v3: teams and code owners gate review; workflow runs get secrets; packages publish and download", async () => {
+  const alice = as(ids.alice);
+  await admin.createTeam("docs-team", ["hana"]);
+  await admin.request("POST", "config", { owners: [{ pattern: "OWNED.md", owners: ["team:docs-team"] }] });
+  const s = await alice.open({ goal: "owned file", intent: ["OWNED.md"] });
+  await alice.write(s.id, "OWNED.md", "# owned\n");
+  const r: any = await alice.submit(s.id);
+  assert.notEqual(r.status, "landed", "an owned path never lands without its owner: " + r.status);
+  const pack = await admin.request("GET", `sessions/${s.id}/review-pack`);
+  assert.ok(pack.requiredOwners.some((o: any) => o.pattern === "OWNED.md" && !o.satisfied));
+  // workflows + secrets
+  const cfg = await admin.request("GET", "config");
+  await admin.request("POST", "config", { checks: cfg.checks, workflows: [{ name: "deploy", on: ["manual"], command: "node -e \"process.exit(process.env.DEPLOY_TOKEN==='tok'?0:1)\"", secrets: ["DEPLOY_TOKEN"] }] });
+  await admin.setSecret("DEPLOY_TOKEN", "tok");
+  assert.deepEqual(await admin.secrets(), [{ name: "DEPLOY_TOKEN" }]);
+  const run = await admin.runWorkflow("deploy");
+  let st = "";
+  for (let i = 0; i < 40 && !["passed", "failed"].includes(st); i++) { await sleep(500); st = (await admin.run(run.id)).status; }
+  assert.equal(st, "passed", (await admin.run(run.id)).output);
+  // packages
+  const bytes = Buffer.from("package bytes");
+  await admin.publishPackage({ name: "demo-lib", version: "1.0.0", files: [{ name: "demo.txt", contentBase64: bytes.toString("base64") }] });
+  assert.equal((await admin.packages())[0].latest, "1.0.0");
+  assert.deepEqual(await admin.downloadPackageFile("demo-lib", "1.0.0", "demo.txt"), bytes);
+  await rejects(admin.publishPackage({ name: "demo-lib", version: "1.0.0", files: [{ name: "demo.txt", contentBase64: bytes.toString("base64") }] }), 409);
+});
+
 await step("provenance chain and audit log verify before restart", async () => {
   const p = await admin.request("GET", "provenance");
   assert.equal(p.chain.ok, true);
