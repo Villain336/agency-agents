@@ -1,0 +1,1 @@
+[{"by":"rev2","agent":"cai","note":"README documents chunk(xs,size) but chunk is not in lib.js exports on main and this change adds no implementation or tests; resubmit with the function or after it lands"}]

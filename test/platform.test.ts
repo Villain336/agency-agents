@@ -746,3 +746,34 @@ test("auto-resolved edits add to the risk score so a reviewer can see them", () 
   const res = r.submit("b");
   assert.ok(res.risk!.reasons.some((x) => /auto-merged .*overlapping/i.test(x)), res.risk!.reasons.join("|"));
 });
+
+// ---- duplicate declarations produced by union merges (found by a reviewer agent in swarm run 3) ----
+test("a merge that would declare the same function twice is stopped and explained", () => {
+  const r = mk({ "lib.js": libWith(["sum"]) });
+  r.setConfig({ merge: { lists: true, union: ["*.js"] } });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "lib.js", libWith(["sum", "slugify"]));
+  r.write("b", "lib.js", libWith(["sum", "slugify"]).replace("slugifyImpl(x)", "slugifyImpl(x.trim())")); // bruno also adds slugify, slightly different
+  assert.equal(r.submit("a").status, "landed");
+  const res: any = r.submit("b");
+  assert.equal(res.status, "active");
+  assert.deepEqual(res.duplicates, [{ path: "lib.js", name: "slugify" }]);
+  assert.match(r.sessionRO("b").feedback!.at(-1)!.note, /declare `slugify` twice/);
+  assert.equal((r.head("lib.js")!.match(/function slugify/g) ?? []).length, 1, "nothing landed");
+});
+
+test("an author can confirm an intentional duplicate (e.g. TypeScript overloads)", () => {
+  const ov = (n: number) => Array.from({ length: n }, (_, i) => `function f(a${i}: number): number;\n`).join("") + "function f(a: number): number {\n  return a;\n}\n";
+  const r = mk({ "o.ts": ov(1) });
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.write("a", "o.ts", ov(2));
+  assert.equal((r.submit("a", undefined, undefined, { allowRevert: true }) as any).status, "landed");
+});
+
+test("existing duplicates and ordinary edits are not flagged", () => {
+  const r = mk({ "lib.js": libWith(["sum", "sum"]) }); // already duplicated on trunk
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.write("a", "lib.js", libWith(["sum", "sum"]).replace("sumImpl(x)", "sumImpl(x + 1)"));
+  assert.equal(r.submit("a").status, "landed");
+});

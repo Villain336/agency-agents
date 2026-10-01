@@ -1,0 +1,321 @@
+{
+  "repo": "swarm2",
+  "generatedAt": "2026-10-01T19:31:22.732Z",
+  "agents": 16,
+  "developers": 16,
+  "trunkRev": 15,
+  "landedChanges": 14,
+  "totals": {
+    "conflicts": 64,
+    "resolves": 112,
+    "ciRuns": 20,
+    "failedChecks": 0,
+    "parked": 2,
+    "reviews": 3,
+    "approvals": 2,
+    "rejections": 1
+  },
+  "timeToLandSec": {
+    "first": 68,
+    "p50": 98,
+    "p90": 120,
+    "last": 138
+  },
+  "integrity": {
+    "developersAsked": 16,
+    "functionsOnTrunk": 12,
+    "lostAfterLanding": [],
+    "neverLanded": [
+      "ada",
+      "eli",
+      "ned",
+      "pia"
+    ]
+  },
+  "finalTrunk": {
+    "files": [
+      "README.md",
+      "lib.js",
+      "lib.test.js"
+    ],
+    "testsRun": 26,
+    "testsPassed": 26,
+    "testsFailed": 0,
+    "exportedFunctions": 14,
+    "exported": [
+      "capitalize",
+      "sum",
+      "last",
+      "truncate",
+      "partition",
+      "median",
+      "average",
+      "groupBy",
+      "pick",
+      "zip",
+      "range",
+      "unique",
+      "clamp",
+      "chunk"
+    ]
+  },
+  "provenanceSample": {
+    "rev": 15,
+    "record": {
+      "semantic": [],
+      "evidence": [
+        {
+          "check": "unit",
+          "passed": true,
+          "jobId": "j20",
+          "rev": 14
+        }
+      ],
+      "approvals": [
+        {
+          "by": "rev2",
+          "kind": "reviewer"
+        }
+      ],
+      "goal": "README bullet for chunk (chunk landed in rev 14)",
+      "actor": {
+        "id": "id3",
+        "name": "cai",
+        "kind": "agent"
+      },
+      "baseRev": 14,
+      "risk": {
+        "score": 35,
+        "tier": "medium",
+        "reasons": [
+          "+25 protected path(s): README.md",
+          "+10 author has recently rejected changes"
+        ]
+      },
+      "rev": 15,
+      "sessionId": "cai-3",
+      "paths": [
+        "README.md"
+      ],
+      "merged": false,
+      "ts": 1790882565627,
+      "prevHash": "de184f1f7725dd43396ad94d10636fc7452ac676db0672ce21fc38dd1f93db02"
+    },
+    "hashPrefix": "72bc74e02e428070",
+    "signaturePrefix": "04e4219ee22d471c"
+  },
+  "chain": {
+    "ok": true,
+    "checked": 15
+  },
+  "perAgent": [
+    {
+      "agent": "ada",
+      "opened": 1790882473227,
+      "firstLanded": 0,
+      "conflicts": 5,
+      "resolves": 8,
+      "checkRuns": 0,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 0,
+      "secondsToLand": null
+    },
+    {
+      "agent": "ben",
+      "opened": 1790882472616,
+      "firstLanded": 1790882533236,
+      "conflicts": 8,
+      "resolves": 10,
+      "checkRuns": 3,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 2,
+      "landedChanges": 1,
+      "secondsToLand": 120
+    },
+    {
+      "agent": "cai",
+      "opened": 1790882474908,
+      "firstLanded": 1790882550764,
+      "conflicts": 8,
+      "resolves": 14,
+      "checkRuns": 4,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 3,
+      "landedChanges": 2,
+      "secondsToLand": 138
+    },
+    {
+      "agent": "dev",
+      "opened": 1790882474626,
+      "firstLanded": 1790882526970,
+      "conflicts": 4,
+      "resolves": 8,
+      "checkRuns": 4,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 2,
+      "landedChanges": 2,
+      "secondsToLand": 114
+    },
+    {
+      "agent": "eli",
+      "opened": 1790882473831,
+      "firstLanded": 0,
+      "conflicts": 4,
+      "resolves": 6,
+      "checkRuns": 0,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 0,
+      "secondsToLand": null
+    },
+    {
+      "agent": "fay",
+      "opened": 1790882472811,
+      "firstLanded": 1790882508281,
+      "conflicts": 4,
+      "resolves": 8,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 95
+    },
+    {
+      "agent": "gus",
+      "opened": 1790882473983,
+      "firstLanded": 1790882495131,
+      "conflicts": 2,
+      "resolves": 4,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 82
+    },
+    {
+      "agent": "hui",
+      "opened": 1790882472418,
+      "firstLanded": 1790882480957,
+      "conflicts": 0,
+      "resolves": 0,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 68
+    },
+    {
+      "agent": "ivy",
+      "opened": 1790882473478,
+      "firstLanded": 1790882503741,
+      "conflicts": 3,
+      "resolves": 6,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 91
+    },
+    {
+      "agent": "jon",
+      "opened": 1790882474257,
+      "firstLanded": 1790882499510,
+      "conflicts": 1,
+      "resolves": 2,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 87
+    },
+    {
+      "agent": "kim",
+      "opened": 1790882472953,
+      "firstLanded": 1790882516227,
+      "conflicts": 6,
+      "resolves": 12,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 1,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 103
+    },
+    {
+      "agent": "leo",
+      "opened": 1790882473412,
+      "firstLanded": 1790882513988,
+      "conflicts": 5,
+      "resolves": 10,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 1,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 101
+    },
+    {
+      "agent": "mia",
+      "opened": 1790882472382,
+      "firstLanded": 1790882510715,
+      "conflicts": 5,
+      "resolves": 10,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 98
+    },
+    {
+      "agent": "ned",
+      "opened": 1790882474075,
+      "firstLanded": 0,
+      "conflicts": 4,
+      "resolves": 6,
+      "checkRuns": 0,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 0,
+      "secondsToLand": null
+    },
+    {
+      "agent": "oli",
+      "opened": 1790882474681,
+      "firstLanded": 1790882489875,
+      "conflicts": 1,
+      "resolves": 2,
+      "checkRuns": 1,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 1,
+      "secondsToLand": 77
+    },
+    {
+      "agent": "pia",
+      "opened": 1790882473544,
+      "firstLanded": 0,
+      "conflicts": 4,
+      "resolves": 6,
+      "checkRuns": 0,
+      "failedChecks": 0,
+      "parked": 0,
+      "reviews": 0,
+      "landedChanges": 0,
+      "secondsToLand": null
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+$ git clone http://gitdemo:<token>@localhost:8789/git/swarm2
+(cloned)
+$ git log --oneline | head -8
+cbabc9a README bullet for chunk (chunk landed in rev 14)
+4e900e7 add chunk code+tests
+935b02a README bullet for unique
+286f649 add clamp code
+5cfe934 add unique(xs) and README bullet
+a576350 add range
+70691c5 add zip
+f02a33c add pick(obj, keys)
+$ git log -1 --format=%B   # the last landed change, with Weave's trailers
+cai: README bullet for chunk (chunk landed in rev 14)
+
+Weave-Session: cai-3
+Weave-Rev: r15
+$ git fsck --strict
+(clean)
+$ grep -c "^test(" lib.test.js
+26

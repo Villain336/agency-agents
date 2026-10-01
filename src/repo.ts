@@ -9,7 +9,7 @@ import { canonical, hmacSha256, randomToken, sha256 } from "./crypto.ts";
 import { diffStat, fileDiff, type FileDiff } from "./diff.ts";
 import { diffHunks, merge3, resolveSegments, splitLines, type MergeOptions, type Choice, type Segment } from "./merge.ts";
 import { DEFAULT_POLICY, scoreRisk, type Need, type Policy, type RiskReport } from "./review.ts";
-import { semanticRisk, type Risk } from "./semantic.ts";
+import { semanticRisk, symbols, type Risk } from "./semantic.ts";
 import { shardOf } from "./shard.ts";
 
 export type Status = "active" | "conflicted" | "needs_verify" | "verifying" | "in_review" | "landed" | "rejected";
@@ -126,7 +126,7 @@ export interface Session {
   /** train mode: queued changes this one would conflict with; it is not built until they resolve */
   blockedOn?: string[];
   /** what reviewers/verifiers told the author, so the reason is never only in the audit log */
-  feedback?: { type: "rejected" | "verify_failed" | "reverts"; by: string; note: string; ts: number }[];
+  feedback?: { type: "rejected" | "verify_failed" | "reverts" | "duplicates"; by: string; note: string; ts: number }[];
   /** overlapping edits resolved by the list/union strategies at the last evaluation */
   autoResolved?: { path: string; count: number }[];
   /** trunk revision at which the current conflicts were computed; resolutions are based on it */
@@ -647,6 +647,27 @@ export class Repo {
     return out;
   }
 
+  /**
+   * Top-level names the merged result declares more than once that trunk does not already. Union and list
+   * merges can combine two sides that each added the same function; in many languages that is legal (the
+   * last one silently wins), so neither the compiler nor the tests would notice.
+   */
+  private duplicatesOf(changes: Record<string, string | null>): { path: string; name: string }[] {
+    const count = (text: string | null) => {
+      const m = new Map<string, number>();
+      if (text) for (const s of symbols(splitLines(text))) if (s.name !== "<top>") m.set(s.name, (m.get(s.name) ?? 0) + 1);
+      return m;
+    };
+    const out: { path: string; name: string }[] = [];
+    for (const [path, merged] of Object.entries(changes)) {
+      if (merged === null) continue;
+      const after = count(merged);
+      const before = count(this.head(path));
+      for (const [name, n] of after) if (n > 1 && n > (before.get(name) ?? 0)) out.push({ path, name });
+    }
+    return out;
+  }
+
   private riskOf(s: Session, r: ReturnType<Repo["mergeAll"]>, reverts: Revert[] = []): RiskReport {
     const mine = Object.values(this.s.sessions).filter((x) => x.agent === s.agent && x.id !== s.id).slice(-5);
     return scoreRisk({
@@ -657,7 +678,7 @@ export class Repo {
   }
 
   /** Try to land a session onto trunk atomically, subject to policy gates. */
-  submit(id: string, message?: string, actor?: Actor, opts: { allowRevert?: boolean } = {}): { status: Status; rev?: number; conflicts?: Conflict[]; risks?: Risk[]; risk?: RiskReport; jobs?: string[]; evidence?: Evidence[]; reverts?: Revert[] } {
+  submit(id: string, message?: string, actor?: Actor, opts: { allowRevert?: boolean } = {}): { status: Status; rev?: number; conflicts?: Conflict[]; risks?: Risk[]; risk?: RiskReport; jobs?: string[]; evidence?: Evidence[]; reverts?: Revert[]; duplicates?: { path: string; name: string }[] } {
     const s = this.session(id);
     this.assertOwner(s, actor);
     if (s.status === "landed" || s.status === "rejected") throw new WeaveError(`session ${id} is ${s.status}`, 409);
@@ -689,6 +710,14 @@ export class Repo {
       (s.feedback ??= []).push({ type: "reverts", by: "weave", ts: this.now(), note: `landing this would remove ${what}. Re-read the current trunk, re-apply your change on top of it and put the result in your session; if removing that work is intended, submit with allowRevert.` });
       this.log("reverts", `${s.agent}'s change would remove work landed by ${[...new Set(reverts.map((x) => x.agent))].join(", ")}; sent back to the author`, s);
       return { status: "active", reverts };
+    }
+    const dupes = this.duplicatesOf(r.changes);
+    if (dupes.length && !opts.allowRevert) {
+      s.status = "active";
+      s.blockedOn = undefined;
+      (s.feedback ??= []).push({ type: "duplicates", by: "weave", ts: this.now(), note: `after merging with concurrent work this would declare ${dupes.map((d) => `\`${d.name}\` twice (${d.path})`).join(", ")}; someone already landed it. Re-read trunk and keep only what is still missing; submit with allowRevert if the duplicate is intended (e.g. overloads).` });
+      this.log("duplicates", `${s.agent}'s change would declare ${dupes.map((d) => d.name).join(", ")} twice; sent back to the author`, s);
+      return { status: "active", duplicates: dupes };
     }
     const risk = (s.risk = this.riskOf(s, r, reverts));
     s.autoResolved = r.auto;
