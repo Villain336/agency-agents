@@ -14,6 +14,8 @@ working for days. Weave is designed for many agents working for minutes.
 | Surprise conflicts at merge time | **Intent declarations**: agents say what they'll touch; overlaps warn *before* code is written. |
 | PR + serial merge queue | **Atomic landing**: a 3-way merge against trunk *as it is now*. Independent work lands instantly; concurrent edits to one file auto-merge. |
 | Conflict markers | **Structured conflicts**: base/ours/theirs as data; the agent resolves and resubmits while others keep landing. |
+| Hot lines everyone edits (exports, index files, appended tests) | **Merge strategies**: single-line lists (exports, imports, arrays) merge item by item, and same-point inserts can be unioned for configured paths. Opt-in, counted in risk and provenance, never silent. |
+| A stale edit that quietly deletes a teammate's work | **Revert detection**: a clean merge that would remove substantial code someone else recently landed is stopped and explained to the author; `allowRevert` confirms an intentional removal (then it needs review). Writes can declare `basedOn`. |
 | "It merged cleanly but broke" | **Semantic gate**: if two changes touch the same function, or one changes something the other's function uses, landing waits for evidence on the *merged* result. |
 | Required status checks | **Pull-based runners**: checks run against the exact merged result (optionally speculatively, queued behind earlier changes: `evidence: "train"`). Failures go back to the agent with the output. |
 | CODEOWNERS + review everything | **Risk-tiered review**: low-risk changes land on evidence; medium needs a reviewer (agent or human); high needs a human. A review queue ranks by risk and respects a human attention budget. |
@@ -30,7 +32,7 @@ large files offload to R2). Repos can be **sharded by path prefix** so unrelated
 
 ```sh
 npm install --legacy-peer-deps
-npm test                  # 76 unit + integration tests (includes real `git` against the git bridge)
+npm test                  # 130+ unit and integration tests (real `git` against the git bridge; differential fuzz vs `git merge-file`)
 npm run dev               # http://localhost:8787, open dev mode (no auth); click "Run multi-agent demo"
 npm run e2e               # boots the Worker with auth + R2, drives every feature end to end (needs python3, git)
 ```
@@ -57,7 +59,8 @@ Configure policy, checks and protected paths:
 curl -X POST $URL/api/config -H "Authorization: Bearer $ADMIN" -d '{
   "checks":[{"name":"unit","command":"npm test","timeoutMs":120000}],
   "reviewPaths":["src/auth","infra/"],
-  "policy":{"autoLandBelow":30,"humanAbove":70,"attentionBudget":5,"evidence":"paths"},
+  "policy":{"autoLandBelow":30,"humanAbove":70,"attentionBudget":5,"evidence":"train"},
+  "merge":{"lists":true,"union":["*.test.js","CHANGELOG.md"]},
   "webhooks":[{"url":"https://example.com/hook","secret":"…","events":["landed","conflict"]}],
   "mirror":{"url":"https://github.com/you/repo.git"}
 }'
@@ -76,6 +79,10 @@ node scripts/runner.ts --url $URL --token $RUNNER_TOKEN --name runner-1
 Tools: `weave_status`, `weave_open_session`, `weave_read_file`, `weave_write_file`, `weave_preview`,
 `weave_submit`, `weave_resolve_conflict`, `weave_review_pack`, `weave_review`, `weave_verify`,
 `weave_comment`, `weave_history`, `weave_provenance`, and more.
+
+**From the command line** (`scripts/wv.ts`, built for agents and humans): `open`, `cat [--session ID]`, `put`,
+`preview`, `submit`, `session`, `resolve ID path file`, `wait`, `queue`, `pack`, `review`. It remembers which
+trunk revision each `cat` read and sends it as `basedOn`, so resolutions merge with what landed since.
 
 **From code:**
 
@@ -150,6 +157,9 @@ All routes accept `?repo=<name>` (default `default`) and `Authorization: Bearer 
 - State is loaded into memory per Durable Object (large repos need lazy loading). Check runners are
   pull-based and bring-your-own; Weave does not provision preview environments (runners can report
   a preview URL).
+- **Hot lines still serialize.** Sixteen agents all editing one line is the worst case for optimistic merging.
+  List merging and union fix the common shapes (exports, imports, appended tests); other hot spots (one
+  function everyone rewrites) still conflict, and agents re-apply their change. See docs/SWARM-RUN.md.
 - No issues, projects, code search, web code browser, forks, or notifications. Weave is a
   collaboration layer for agent-scale change, not a GitHub clone.
 
@@ -159,6 +169,6 @@ All routes accept `?repo=<name>` (default `default`) and `Authorization: Bearer 
 `src/review.ts` risk scoring · `src/store.ts` SQLite/R2 persistence · `src/api.ts` router ·
 `src/index.ts` Worker + Durable Object · `src/mcp.ts` MCP · `src/git/` Git bridge ·
 `sdk/` clients · `scripts/` runner, demo, import · `test/` unit tests · `test-e2e/` live end-to-end ·
-`docs/RESEARCH.md` design rationale.
+`docs/` BENCHMARK (simulation vs push-and-retry and a merge queue, with caveats), SWARM-RUN (16 real agents, three runs, what broke), LIVE-TRIAL, RESEARCH (design rationale).
 
 MIT licensed.
