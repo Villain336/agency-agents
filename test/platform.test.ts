@@ -500,9 +500,9 @@ test("resolveWith requires an actual conflict on that path and respects ownershi
 });
 
 // ---- swarm run 1: stale resolutions silently erased teammates' landed work -----
-const lib = (names: string[]) => names.map((n) => `function ${n}(x) {\n  const a = x;\n  const b = a + 1;\n  return b;\n}\n`).join("\n") + `\nmodule.exports = { ${names.join(", ")} };\n`;
+const lib = (names: string[]) => names.map((n) => `function ${n}(x) {\n  const ${n}Input = x;\n  const ${n}Result = ${n}Input + 1;\n  return ${n}Result;\n}\n`).join("\n") + `\nmodule.exports = { ${names.join(", ")} };\n`;
 
-test("resolution is based on the trunk the conflict was computed against, so later landings are not erased", () => {
+test("a stale resolution cannot silently erase landed work (revert detection is the safety net)", () => {
   const r = mk({ "lib.js": lib(["sum"]) });
   r.open({ id: "ivy", agent: "ivy", goal: "g" });
   r.open({ id: "gus", agent: "gus", goal: "g" });
@@ -553,10 +553,10 @@ test("an author can confirm an intentional removal; it then needs review", () =>
 test("small edits and ordinary rewrites by the same author are not flagged as reverts", () => {
   const r = mk({ "lib.js": lib(["sum", "last"]) });
   r.open({ id: "a", agent: "alice", goal: "g" });
-  r.write("a", "lib.js", lib(["sum", "last"]).replace("a + 1", "a + 2"));
+  r.write("a", "lib.js", lib(["sum", "last"]).replace("sumInput + 1", "sumInput + 2"));
   assert.equal(r.submit("a").status, "landed");
   r.open({ id: "b", agent: "alice", goal: "g" }); // same author reworking their own change
-  r.write("b", "lib.js", lib(["sum", "last"]).replace("a + 1", "a + 3"));
+  r.write("b", "lib.js", lib(["sum", "last"]).replace("sumInput + 1", "sumInput + 3"));
   assert.equal(r.submit("b").status, "landed");
 });
 
@@ -629,4 +629,38 @@ test("waiting sessions whose change already reached trunk are closed; queue risk
   r.review("a", "rev", true); // alice lands; bruno's change is now already on trunk
   assert.equal(r.session("b").status, "landed", "an identical change needs no review");
   assert.equal(r.reviewQueue("human").next.length, 0);
+});
+
+test("an up-to-date resolution does not conflict again just because trunk moved after the conflict was detected", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  for (const [id, name] of [["ivy", "average"], ["bob", "capitalize"], ["eli", "flatten"]] as const) {
+    r.open({ id, agent: id, goal: "g" });
+    r.write(id, "lib.js", lib(["sum", name]));
+  }
+  assert.equal(r.submit("ivy").status, "landed"); // r2 changes the shared exports line
+  assert.equal(r.submit("bob").status, "conflicted"); // detected at r2
+  assert.equal(r.submit("eli").status, "conflicted");
+  r.resolveWith("eli", "lib.js", lib(["sum", "average", "flatten"]));
+  assert.equal(r.submit("eli").status, "landed"); // r3 changes the exports line again, after bob's conflict was detected
+  // bob re-reads trunk r3 and builds his file from it: that is the freshest possible resolution
+  r.resolveWith("bob", "lib.js", lib(["sum", "average", "flatten", "capitalize"]), undefined, 3);
+  assert.equal(r.submit("bob").status, "landed", "a resolution built from r3 must not conflict with r3");
+  assert.ok(["average", "flatten", "capitalize"].every((n) => r.head("lib.js")!.includes(`function ${n}`)));
+});
+
+test("a resolution that declares an older base is merged with what landed since", () => {
+  const r = mk({ "lib.js": lib(["sum"]) });
+  for (const [id, name] of [["ivy", "average"], ["bob", "capitalize"], ["eli", "flatten"]] as const) {
+    r.open({ id, agent: id, goal: "g" });
+    r.write(id, "lib.js", lib(["sum", name]));
+  }
+  r.submit("ivy"); // r2
+  r.submit("bob"); // conflicted at r2
+  r.submit("eli");
+  r.resolveWith("eli", "lib.js", lib(["sum", "average", "flatten"]));
+  r.submit("eli"); // r3
+  // bob only read r2: his file lacks flatten. Declaring that base, flatten is merged in (or flagged), never erased
+  r.resolveWith("bob", "lib.js", lib(["sum", "average", "capitalize"]), undefined, 2);
+  r.submit("bob");
+  assert.ok(r.head("lib.js")!.includes("function flatten"));
 });

@@ -960,7 +960,7 @@ export class Repo {
   }
 
   /** Resolve a conflicted path by supplying the final merged file (the easy path for agents). */
-  resolveWith(id: string, path: string, content: string, actor?: Actor) {
+  resolveWith(id: string, path: string, content: string, actor?: Actor, basedOn?: number) {
     const s = this.session(id);
     this.assertOwner(s, actor);
     if (!s.conflicts.some((x) => x.path === path)) {
@@ -970,8 +970,13 @@ export class Repo {
       s.conflicts = fresh.conflicts;
       s.conflictRev = this.s.rev;
     }
+    if (basedOn !== undefined && (!Number.isInteger(basedOn) || basedOn < 0 || basedOn > this.s.rev)) throw new WeaveError(`basedOn must be an integer between 0 and the current revision (r${this.s.rev})`);
     s.edits[path] = content;
-    s.pathBase[path] = s.conflictRev ?? this.s.rev;
+    // The base must be the trunk the content was derived from. The agent knows it (it read it); we do not.
+    // Defaulting to the conflict's revision would invent false conflicts whenever trunk moved between
+    // detection and the agent's re-read, so default to "current trunk" and rely on revert detection to
+    // stop a stale file from erasing landed work.
+    s.pathBase[path] = basedOn ?? this.s.rev;
     s.conflicts = s.conflicts.filter((x) => x.path !== path);
     s.verified = undefined;
     s.approvals = [];
