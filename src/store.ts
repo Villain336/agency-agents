@@ -22,7 +22,7 @@ export interface StoreOptions {
 }
 
 const MAX_ROW = 1_900_000; // SQLite rows in Durable Objects are limited to ~2 MB
-const SMALL = ["identities", "comments", "jobs"] as const;
+const SMALL = ["identities", "comments", "jobs", "tasks", "tags", "releases"] as const;
 const META = ["config", "secrets", "auditHead", "mirror", "seq", "rev", "reviewPaths"] as const;
 
 type Packed = { kind: 0 | 1 | 2; content: string | null; blob: string | null };
@@ -109,6 +109,12 @@ export class Store {
       this.cache.set(`outbox:${r.k}`, r.json);
     }
     s.outbox.sort((a: any, b: any) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+    s.notifications = [];
+    for (const r of this.sql.exec("SELECT k, json FROM docs WHERE coll = 'notifications'").toArray()) {
+      s.notifications.push(JSON.parse(r.json));
+      this.cache.set(`notifications:${r.k}`, r.json);
+    }
+    s.notifications.sort((a: any, b: any) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
     const st = upgradeState(s);
     this.persistedRev = st.rev;
     this.persistedEvent = st.seq.event;
@@ -167,7 +173,8 @@ export class Store {
 
       // small collections + metadata: diff against the last written JSON
       const docs: [string, Record<string, unknown>][] = [
-        ["identities", st.identities], ["comments", st.comments], ["jobs", st.jobs],
+        ["identities", st.identities], ["comments", st.comments], ["jobs", st.jobs], ["tasks", st.tasks], ["tags", st.tags], ["releases", st.releases],
+        ["notifications", Object.fromEntries(st.notifications.map((n) => [n.id, n]))],
         ["outbox", Object.fromEntries(st.outbox.map((o) => [o.id, o]))],
       ];
       const newCache = new Map<string, string>();

@@ -1,4 +1,5 @@
 // Pure request router over a Repo. The Durable Object wraps this with auth + persistence.
+import { forgeRoute } from "./forge-api.ts";
 import { exportFastImport } from "./export.ts";
 import { LIVE, Repo, WeaveError, type Actor, type Kind, type Scope } from "./repo.ts";
 import { SCENARIO, SEED } from "./scenario.ts";
@@ -12,6 +13,7 @@ export function requiredScopes(method: string, parts: string[]): Scope[] {
   if (a === "identities" || a === "config" || a === "reset" || a === "import") return method === "GET" && a === "config" ? ["read"] : ["admin"];
   if (a === "runner") return ["runner"];
   if (a === "sessions" && method === "POST") {
+    if (c === "claim-review") return ["review"];
     if (c === "verify") return ["verify"];
     if (c === "review") return ["review"];
     if (c === "comments") return d === "resolve" ? ["review", "write"] : ["review", "write"];
@@ -110,7 +112,7 @@ export function route(c: Ctx): unknown {
       return repo.jobResult(sub, c.actor.open ? String(body.runner ?? "runner") : c.actor.name, { passed: !!body.passed, output: body.output, durationMs: body.durationMs, previewUrl: body.previewUrl });
     if (a === "sessions" && !id) {
       const agent = c.actor.open ? String(body.agent ?? "anonymous") : c.actor.name;
-      return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent ?? undefined, actor: c.actor, model: body.model ?? undefined, prompt: body.prompt ?? undefined, baseRev: body.baseRev ?? undefined });
+      return repo.open({ id: body.id, agent, goal: String(body.goal ?? ""), intent: body.intent ?? undefined, actor: c.actor, model: body.model ?? undefined, prompt: body.prompt ?? undefined, baseRev: body.baseRev ?? undefined, taskNumber: body.taskNumber ?? undefined });
     }
     if (a === "sessions" && id) {
       if (sub === "file") return (repo.write(id, body.path, body.content, c.actor, body.basedOn ?? undefined), { ok: true });
@@ -126,5 +128,7 @@ export function route(c: Ctx): unknown {
       if (sub === "comments" && sid && act === "apply") return repo.applySuggestion(sid, c.actor);
     }
   }
+  const forge = forgeRoute(c);
+  if (forge !== undefined) return forge;
   throw new WeaveError(`no route: ${method} /${parts.join("/")}`, 404);
 }
