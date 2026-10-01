@@ -31,3 +31,10 @@ test("merge engine agrees with real git on random concurrent edits (differential
   // Weave must not be meaningfully more permissive than git
   assert.ok(s.weaveCleanGitConflict / s.cases <= 0.03, `weave merged ${s.weaveCleanGitConflict} cases git rejected`);
 });
+
+test("wv cat writes only file content: nothing on stderr that a redirect could capture", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../scripts/wv.ts", import.meta.url), "utf8");
+  const cat = src.slice(src.indexOf('case "cat"'), src.indexOf('case "put"'));
+  assert.ok(!/console\.error|stderr/.test(cat), "cat must not print anything besides the file");
+});

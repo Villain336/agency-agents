@@ -35,7 +35,7 @@ try {
   switch (cmd) {
     case "status": { const s: any = await w.status(); print({ rev: s.rev, files: s.files, policy: s.policy, checks: s.checks, protectedPaths: s.protectedPaths, liveSessions: s.sessions }); break; }
     case "open": { const [goal, ...paths] = a; const s: any = await w.open({ goal, intent: paths, id: flag("id") }); print(s.id); if (s.warnings?.length) console.error("warnings:", s.warnings.join("; ")); break; }
-    case "cat": { const sid = flag("session"); let c: string | null; if (sid) c = await w.read(sid, a[0]); else { const r = await w.readTrunkAt(a[0]); c = r.content; remember(a[0], r.rev); console.error(`# trunk r${r.rev}`); } process.stdout.write(c ?? ""); break; }
+    case "cat": { const sid = flag("session"); let c: string | null; if (sid) c = await w.read(sid, a[0]); else { const r = await w.readTrunkAt(a[0]); c = r.content; remember(a[0], r.rev); } process.stdout.write(c ?? ""); break; }
     case "put": { const [id, path, file] = a; await w.write(id, path, readFileSync(file, "utf8"), revs[path]); print("ok"); break; }
     case "del": { await w.write(a[0], a[1], null); print("ok"); break; }
     case "preview": { const p: any = await w.preview(a[0]); print({ mergedWithConcurrentWork: p.merged, conflicts: p.conflicts.map((c: any) => c.path), semanticRisks: p.risks, trunkRev: p.baseRev }); break; }
