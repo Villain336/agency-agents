@@ -3,12 +3,12 @@
 <style>
 :root{--bg:#0b0d12;--panel:#12151c;--line:#242a36;--fg:#e8ebf2;--dim:#8a93a6;--acc:#f6821f;--ok:#37d39a;--bad:#ff5d6c;--warn:#f5b942;--cool:#6ea8fe}
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:18px/1.45 ui-sans-serif,system-ui,sans-serif;overflow:hidden}
-#stage{height:100vh;display:flex;flex-direction:column;justify-content:center;padding:0 90px}
+#stage{height:100vh;display:flex;flex-direction:column;justify-content:center;padding:0 90px 120px}
 h1{font-size:76px;margin:0 0 14px;color:var(--acc);letter-spacing:-.02em}h2{font-size:40px;margin:0 0 22px;letter-spacing:-.01em}
 .sub{font-size:28px;color:var(--dim);margin:0}.big{font-size:66px;font-weight:700;font-variant-numeric:tabular-nums}
 .row{display:flex;gap:30px;align-items:flex-end}.kpi{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px 26px}
 .kpi small{color:var(--dim);display:block;font-size:15px;letter-spacing:.08em;text-transform:uppercase}.kpi .big{display:block;margin-top:6px}
-.bar{height:34px;border-radius:7px;margin:10px 0;display:flex;align-items:center;padding-left:12px;font-size:17px;font-weight:600;color:#0b0d12;white-space:nowrap;transition:width 1.4s cubic-bezier(.2,.8,.2,1)}
+.bar{height:26px;border-radius:7px;margin:4px 0 18px;min-width:8px;transition:width 1.4s cubic-bezier(.2,.8,.2,1)}.barlab{font-size:21px;margin-top:6px}.barlab b{font-variant-numeric:tabular-nums}
 .lab{display:flex;justify-content:space-between;color:var(--dim);font-size:16px;margin-top:14px}
 pre{background:#080a0e;border:1px solid var(--line);border-radius:14px;padding:22px 26px;font:17px/1.5 ui-monospace,Menlo,monospace;color:#cfd6e6;margin:0;overflow:hidden;white-space:pre-wrap}
 pre .p{color:var(--ok)}pre .c{color:var(--dim)}
@@ -28,7 +28,7 @@ const fmt=n=>Number(n).toLocaleString();
 const S={
  async title(){ $('#stage').innerHTML=`<div class="fade"><h1>Weave</h1><p class="sub">Many agents. One trunk. Zero branches.</p><p class="sub" style="margin-top:30px;font-size:22px">A collaboration layer for AI agents, built on Cloudflare Workers, Durable Objects and R2</p></div>`},
  async problem(){ const b=await J('/data/bench.json'); const r=b.rows.find(x=>x.agents===100&&x.skew===1&&x.concurrency===5)||b.rows.at(-1); const P=r.results.find(x=>x.policy==='push-race'), Q=r.results.find(x=>x.policy.startsWith('queue')), W=r.results.find(x=>x.policy.startsWith('weave'));
-   const max=Math.max(P.ciRuns,Q.ciRuns,W.ciRuns); const bar=(x,c,label)=>`<div class="bar" style="width:${Math.max(6,100*x.ciRuns/max)}%;background:${c}">${label}: ${fmt(x.ciRuns)} test runs</div>`;
+   const max=Math.max(P.ciRuns,Q.ciRuns,W.ciRuns); const bar=(x,c,label)=>`<div class="barlab" style="color:${c}">${label}: <b>${fmt(x.ciRuns)}</b> test runs</div><div class="bar" style="width:${Math.max(1,100*x.ciRuns/max)}%;background:${c}"></div>`;
    $('#stage').innerHTML=`<div class="fade"><h2>Git's workflow breaks at agent scale</h2><p class="sub">${r.agents} agents land one change each in a hot repo. Same workload, same build capacity:</p><div style="margin-top:34px">${bar(P,'var(--bad)','push, rebase, retry (plain git)')}${bar(Q,'var(--cool)','merge queue, 5 builds at once')}${bar(W,'var(--ok)','Weave')}</div><div class="lab"><span>real git merges; Weave runs its real code; time is simulated (CI = 60s)</span><span>lower is better</span></div></div>`},
  async swarm(){ $('#stage').innerHTML=''},
  async journey(){ const rs=await Promise.all(['run1','run2','run3'].map(r=>J('/data/'+r+'/swarm-report.json')));

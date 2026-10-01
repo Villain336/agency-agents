@@ -5,7 +5,7 @@
 :root{--bg:#0b0d12;--panel:#12151c;--line:#242a36;--fg:#e8ebf2;--dim:#8a93a6;--acc:#f6821f;
 --landed:#37d39a;--work:#6ea8fe;--test:#b48cff;--conf:#ff5d6c;--review:#f5b942;--queue:#7d8aa6;--resolve:#ff9f6e}
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.4 ui-sans-serif,system-ui,sans-serif;overflow:hidden}
-#app{display:grid;grid-template-rows:auto 1fr;height:100vh}
+#app{display:grid;grid-template-rows:auto 1fr;height:calc(100vh - 92px)}
 header{display:flex;gap:28px;align-items:center;padding:14px 22px;border-bottom:1px solid var(--line);background:#0e1117}
 h1{margin:0;font-size:20px;letter-spacing:.02em;color:var(--acc)}h1 small{color:var(--dim);font-weight:400;font-size:13px;margin-left:10px}
 .stat{display:flex;flex-direction:column}.stat b{font-size:28px;line-height:1;font-variant-numeric:tabular-nums}.stat span{color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin-top:3px}
