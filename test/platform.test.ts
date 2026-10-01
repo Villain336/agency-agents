@@ -339,8 +339,48 @@ test("review pack marks which evidence applies to the current edits", () => {
   assert.equal(r.reviewPack("s").evidence[0].current, false);
 });
 
-test("resolve on a session with no known conflict explains how to detect one", () => {
+test("resolve works as soon as preview shows a conflict, without a submit round-trip", () => {
+  const r = mk({ "f.js": "a\nb\nc\n" });
+  r.open({ id: "x", agent: "alice", goal: "g" });
+  r.open({ id: "y", agent: "bruno", goal: "g" });
+  r.write("x", "f.js", "a\nALICE\nc\n");
+  r.write("y", "f.js", "a\nBRUNO\nc\n");
+  r.submit("x");
+  assert.equal(r.preview("y").conflicts.length, 1);
+  r.resolve("y", "f.js", [{ text: "ALICE+BRUNO" }]); // no prior submit needed
+  assert.equal(r.submit("y").status, "landed");
+  assert.equal(r.head("f.js"), "a\nALICE+BRUNO\nc\n");
+});
+
+test("resolve with no real conflict says so", () => {
   const r = mk();
   r.open({ id: "s", agent: "a", goal: "g" });
-  assert.throws(() => r.resolve("s", "a.ts", "ours"), /submit .* to detect conflicts/i);
+  r.write("s", "a.ts", "changed");
+  assert.throws(() => r.resolve("s", "a.ts", "ours"), /no conflict on a\.ts against the current trunk/);
+});
+
+test("rejection reasons are visible to the author on the session", () => {
+  const r = mk();
+  r.setConfig({ policy: { autoLandBelow: 0 } });
+  r.open({ id: "s", agent: "a", goal: "g" });
+  r.write("s", "b.ts", "y");
+  r.submit("s");
+  r.review("s", "rev", false, "deletes the tests");
+  const fb = r.sessionRO("s").feedback!;
+  assert.equal(fb.at(-1)!.type, "rejected");
+  assert.equal(fb.at(-1)!.by, "rev");
+  assert.equal(fb.at(-1)!.note, "deletes the tests");
+  assert.equal(r.sessionRO("s").status, "rejected");
+});
+
+test("failed verification notes are visible to the author too", () => {
+  const r = mk({ "m.ts": "export function f() {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}\n" });
+  r.open({ id: "a", agent: "A", goal: "g" });
+  r.open({ id: "b", agent: "B", goal: "g" });
+  r.write("a", "m.ts", "export function f() {\n  const a = 10;\n  const b = 2;\n  return a + b;\n}\n");
+  r.write("b", "m.ts", "export function f() {\n  const a = 1;\n  const b = 20;\n  return a + b;\n}\n");
+  r.submit("a");
+  assert.equal(r.submit("b").status, "needs_verify");
+  r.verify("b", "T", false, "sum is wrong");
+  assert.equal(r.sessionRO("b").feedback!.at(-1)!.note, "sum is wrong");
 });

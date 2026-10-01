@@ -121,6 +121,8 @@ export interface Session {
   evidence: Evidence[];
   previews: string[];
   verifyingSince?: number;
+  /** what reviewers/verifiers told the author, so the reason is never only in the audit log */
+  feedback?: { type: "rejected" | "verify_failed"; by: string; note: string; ts: number }[];
   reviewer?: string;
   landedRev?: number;
   createdAt: number;
@@ -769,8 +771,14 @@ export class Repo {
   resolve(id: string, path: string, how: Choice[] | "ours" | "theirs" | "both", actor?: Actor) {
     const s = this.session(id);
     this.assertOwner(s, actor);
-    const c = s.conflicts.find((x) => x.path === path);
-    if (!c) throw new WeaveError(`no known conflict on ${path}; submit the session first to detect conflicts against the current trunk`, 404);
+    let c = s.conflicts.find((x) => x.path === path);
+    if (!c) {
+      // trunk may have moved since the last submit: look at the current merge instead of making the author round-trip
+      const fresh = this.mergeAll(s);
+      c = fresh.conflicts.find((x) => x.path === path);
+      if (!c) throw new WeaveError(`no conflict on ${path} against the current trunk`, 404);
+      s.conflicts = fresh.conflicts;
+    }
     const n = c.segments.filter((x) => x.kind === "conflict").length;
     const choices = typeof how === "string" ? Array<Choice>(n).fill(how) : how;
     if (c.kind !== "text") {
@@ -796,6 +804,7 @@ export class Repo {
     if (verifier === s.agent) throw new WeaveError("an agent cannot verify its own change", 403);
     if (!passed) {
       s.status = "active";
+      (s.feedback ??= []).push({ type: "verify_failed", by: verifier, note, ts: this.now() });
       this.log("verify_failed", `${verifier} rejected the merged result of ${s.agent}'s change${note ? `: ${note}` : ""}`, s, verifier);
       return { status: s.status };
     }
@@ -812,6 +821,7 @@ export class Repo {
     if (who.name === s.agent) throw new WeaveError("an agent cannot review its own change", 403);
     if (!approve) {
       s.status = "rejected";
+      (s.feedback ??= []).push({ type: "rejected", by: who.name, note, ts: this.now() });
       this.log("rejected", `${who.name} rejected ${s.agent}'s change${note ? `: ${note}` : ""}`, s, who.name);
       return { status: s.status };
     }
