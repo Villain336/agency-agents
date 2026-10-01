@@ -1,7 +1,7 @@
 // receive-pack (push). Pushed trees are turned into Weave session overlays:
 //   refs/weave/sessions/<id>  -> create/replace that session's overlay, delete = abandon
 //   refs/heads/main           -> open a session, write the edits, submit() (3-way merge on trunk)
-import type { Repo } from "../repo.ts";
+import type { Actor, Repo } from "../repo.ts";
 import { concat, ZERO_SHA } from "./bytes.ts";
 import { flattenTree, GitView, MAIN_REF, OPEN_STATUSES, parseCommit, SESSION_PREFIX, type Lookup } from "./objects.ts";
 import { parsePack, type GitObj } from "./pack.ts";
@@ -51,19 +51,19 @@ function plan(view: GitView, lookup: Lookup, commitId: string): Plan {
 
 const slug = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, "-");
 
-function writeSession(repo: Repo, id: string, agent: string, p: Plan) {
+function writeSession(repo: Repo, id: string, agent: string, p: Plan, actor?: Actor) {
   const existing = repo.s.sessions[id];
   if (existing && OPEN_STATUSES.includes(existing.status)) {
     if (existing.agent !== agent) throw new Error(`session ${id} belongs to ${existing.agent}`);
-    Object.assign(existing, { baseRev: p.baseRev, edits: {}, pathBase: {}, conflicts: [], risks: [], intent: [], verified: undefined, status: "active", goal: p.subject });
+    Object.assign(existing, { baseRev: p.baseRev, edits: {}, pathBase: {}, conflicts: [], risks: [], intent: [], verified: undefined, approvals: [], evidence: [], status: "active", goal: p.subject });
   } else {
-    const { session } = repo.open({ id, agent, goal: p.subject });
+    const { session } = repo.open({ id, agent, goal: p.subject, actor });
     session.baseRev = p.baseRev;
   }
-  for (const [path, content] of Object.entries(p.edits)) repo.write(id, path, content);
+  for (const [path, content] of Object.entries(p.edits)) repo.write(id, path, content, actor);
 }
 
-export async function handleReceive(view: GitView, body: Uint8Array, agent: string): Promise<{ body: Uint8Array; mutated: boolean }> {
+export async function handleReceive(view: GitView, body: Uint8Array, agent: string, actor?: Actor): Promise<{ body: Uint8Array; mutated: boolean }> {
   const repo = view.repo;
   const { pkts, next } = readPkts(body, 0, true);
   const cmds: { old: string; id: string; ref: string }[] = [];
@@ -99,13 +99,15 @@ export async function handleReceive(view: GitView, body: Uint8Array, agent: stri
         let id: string, n = 1;
         do id = `git-${slug(agent)}-${n++}`; while (id in repo.s.sessions);
         mutated = true;
-        writeSession(repo, id, agent, p);
-        const r = repo.submit(id);
+        writeSession(repo, id, agent, p, actor);
+        const r = repo.submit(id, undefined, actor);
         const left = `left open as ${SESSION_PREFIX}${id}`;
         let err: string | null = null;
         if (r.status === "conflicted") err = `conflict in ${(r.conflicts ?? []).map((x) => x.path).join(", ")}; ${left}`;
         else if (r.status === "needs_verify") err = `needs verification (${[...new Set((r.risks ?? []).map((x) => x.path))].join(", ")}); ${left}`;
-        else if (r.status === "in_review") err = `awaiting review of protected paths; ${left}`;
+        else if (r.status === "in_review") err = `awaiting review (${r.risk?.tier ?? "medium"} risk, score ${r.risk?.score ?? "?"}); ${left}`;
+        else if (r.status === "verifying") err = `queued for required checks; it lands automatically when they pass; ${left}`;
+        else if (r.status === "active") err = `required checks failed (${(r.evidence ?? []).map((e) => e.check).join(", ")}); fix and push ${SESSION_PREFIX}${id} again; ${left}`;
         results.push({ ref: c.ref, err });
       } else if (c.ref.startsWith(SESSION_PREFIX)) {
         const id = c.ref.slice(SESSION_PREFIX.length);
@@ -115,11 +117,11 @@ export async function handleReceive(view: GitView, body: Uint8Array, agent: stri
           if (!s || !OPEN_STATUSES.includes(s.status)) throw new Error("no such open session");
           if (s.agent !== agent) throw new Error(`session belongs to ${s.agent}`);
           mutated = true;
-          repo.abandon(id);
+          repo.abandon(id, actor);
         } else {
           const p = plan(view, lookup, c.id);
           mutated = true;
-          writeSession(repo, id, agent, p);
+          writeSession(repo, id, agent, p, actor);
         }
         results.push({ ref: c.ref, err: null });
       } else results.push({ ref: c.ref, err: `only ${MAIN_REF} and ${SESSION_PREFIX}* can be pushed` });

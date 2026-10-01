@@ -363,6 +363,11 @@ export class Repo {
     if (this.s.outbox.length > 500) this.s.outbox = this.s.outbox.filter((o) => o.status === "pending").concat(this.s.outbox.filter((o) => o.status !== "pending").slice(-200));
   }
 
+  /** Record an operational event (e.g. from the mirror) in the audit log. */
+  note(type: string, message: string) {
+    this.log(type, message);
+  }
+
   // ---- identities ------------------------------------------------------
   createIdentity(o: { name: string; kind: Kind; scopes?: Scope[]; paths?: string[]; budget?: Identity["budget"]; model?: string }) {
     if (!o.name || !/^[\w.-]+$/.test(o.name)) throw new WeaveError("identity name must match [A-Za-z0-9_.-]+");

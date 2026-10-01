@@ -1,0 +1,10 @@
+{
+  // Local end-to-end configuration: auth required, R2 blob offload simulated locally.
+  "name": "weave-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "vars": { "WEAVE_ADMIN_TOKEN": "test-admin-token" },
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "weave-test-blobs" }],
+  "durable_objects": { "bindings": [{ "name": "REPO", "class_name": "RepoDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepoDO"] }]
+}

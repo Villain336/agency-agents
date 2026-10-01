@@ -16,7 +16,7 @@ interface Cache {
 }
 const caches = new WeakMap<object, Cache>();
 
-export const OPEN_STATUSES = ["active", "conflicted", "needs_verify", "in_review"];
+export const OPEN_STATUSES = ["active", "conflicted", "needs_verify", "verifying", "in_review"];
 export const SESSION_PREFIX = "refs/weave/sessions/";
 export const MAIN_REF = "refs/heads/main";
 

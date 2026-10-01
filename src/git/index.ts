@@ -1,5 +1,5 @@
 // Weave as a Git smart-HTTP remote. Runtime-safe (Workers): no Node APIs, no crypto.subtle.
-import type { Repo } from "../repo.ts";
+import type { Actor, Repo } from "../repo.ts";
 import { GitView } from "./objects.ts";
 import { advertiseReceive, handleReceive } from "./receive.ts";
 import { advertiseUpload, handleUploadV0, handleUploadV2 } from "./upload.ts";
@@ -10,7 +10,7 @@ export { mirrorPush } from "./mirror.ts";
 export interface GitHost {
   repo: Repo;
   /** HTTP Basic: username = agent name, password = token. Return null to reject. */
-  authenticate(req: Request): { agent: string } | null;
+  authenticate(req: Request): { agent: string; actor?: Actor } | null;
   persist(): Promise<void>;
 }
 
@@ -32,6 +32,8 @@ export async function handleGitRequest(req: Request, host: GitHost, prefix = "/g
   const auth = host.authenticate(req);
   if (!auth) return text(401, "authentication required", { "www-authenticate": 'Basic realm="weave"' });
 
+  if (isReceive && auth.actor && !auth.actor.open && !auth.actor.scopes.includes("write")) return text(403, `${auth.actor.name} may not push (needs the write scope)`);
+
   try {
     const view = new GitView(host.repo);
     const send = (body: Uint8Array, type: string) => new Response(body as BodyInit, { headers: { "content-type": type, ...noCache } });
@@ -50,7 +52,7 @@ export async function handleGitRequest(req: Request, host: GitHost, prefix = "/g
       const v2 = /(^|:)version=2(:|$)/.test(req.headers.get("git-protocol") ?? "");
       return send(v2 ? handleUploadV2(view, body) : handleUploadV0(view, body), "application/x-git-upload-pack-result");
     }
-    const r = await handleReceive(view, body, auth.agent);
+    const r = await handleReceive(view, body, auth.agent, auth.actor);
     if (r.mutated) await host.persist();
     return send(r.body, "application/x-git-receive-pack-result");
   } catch (e) {

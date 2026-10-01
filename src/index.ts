@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { ALL_SCOPES, openActor, requiredScopes, route } from "./api.ts";
 import { hmacSha256, timingSafeEqual } from "./crypto.ts";
+import { handleGitRequest, mirrorPush } from "./git/index.ts";
 import { Repo, WeaveError, emptyState, type Actor } from "./repo.ts";
 import { shardOf } from "./shard.ts";
 import { DASHBOARD } from "./dashboard.ts";
@@ -13,6 +14,8 @@ export interface Env {
   BLOBS?: R2Bucket;
   /** when set, every API call must carry a token; when unset the service runs in open dev mode */
   WEAVE_ADMIN_TOKEN?: string;
+  /** token used to push history to the configured mirror remote (e.g. a GitHub PAT) */
+  MIRROR_TOKEN?: string;
 }
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -60,8 +63,49 @@ export class RepoDO extends DurableObject<Env> {
     return this.saving;
   }
 
+  private gitAuth(req: Request): { agent: string; actor?: Actor } | null {
+    const h = req.headers.get("authorization") ?? "";
+    let user = "";
+    let pass = "";
+    if (h.startsWith("Basic ")) {
+      try {
+        const d = atob(h.slice(6));
+        user = d.slice(0, d.indexOf(":"));
+        pass = d.slice(d.indexOf(":") + 1);
+      } catch {}
+    } else if (h.startsWith("Bearer ")) pass = h.slice(7).trim();
+    const admin = this.env.WEAVE_ADMIN_TOKEN;
+    if (!admin) return { agent: user || "git" }; // open dev mode
+    if (!pass) return null;
+    if (timingSafeEqual(pass, admin)) return { agent: user || "root", actor: { id: "root", name: user || "root", kind: "admin", scopes: ALL_SCOPES, paths: [] } };
+    const a = this.repo.authenticate(pass);
+    return a ? { agent: a.name, actor: a } : null;
+  }
+
+  /** Push new trunk history to the configured mirror (e.g. GitHub). Serialized; retried on the next landing. */
+  private mirroring = false;
+  async mirror() {
+    const url = this.repo.config.mirror?.url;
+    const token = this.env.MIRROR_TOKEN;
+    if (!url || !token || this.mirroring || this.repo.s.rev <= this.repo.s.mirror.lastRev || Object.keys(this.repo.config.shards).length) return;
+    this.mirroring = true;
+    try {
+      const r = await mirrorPush(this.repo, url, token, this.repo.s.mirror.lastRev);
+      this.repo.s.mirror.lastRev = r.pushedRev;
+    } catch (e) {
+      this.repo.note("mirror_failed", `mirror push failed: ${String((e as Error).message ?? e).slice(0, 300)}`);
+    } finally {
+      this.mirroring = false;
+    }
+    await this.persist().catch(() => {});
+  }
+
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname.startsWith("/git/")) {
+      const host = { repo: this.repo, authenticate: (r: Request) => this.gitAuth(r), persist: async () => { await this.persist(); this.ctx.waitUntil(this.deliver()); this.ctx.waitUntil(this.mirror()); } };
+      return handleGitRequest(req, host, "/git");
+    }
     const parts = url.pathname.split("/").filter(Boolean).slice(1); // drop "api"
     const actor: Actor = req.headers.get("x-weave-actor") ? JSON.parse(req.headers.get("x-weave-actor")!) : openActor();
     const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
@@ -74,6 +118,7 @@ export class RepoDO extends DurableObject<Env> {
         if (replaced) this.store.reset();
         await this.persist();
         this.ctx.waitUntil(this.deliver());
+        this.ctx.waitUntil(this.mirror());
       }
       return json(out);
     } catch (e) {
@@ -263,6 +308,13 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/health") return json({ ok: true, auth: env.WEAVE_ADMIN_TOKEN ? "required" : "open" });
+    const g = /^\/git\/([^/]+)(\/.*)$/.exec(url.pathname);
+    if (g) {
+      // `git clone https://<host>/git/<repo>`; served by the repo's main shard, credentials checked inside the DO
+      const inner = new URL(req.url);
+      inner.pathname = `/git${g[2]}`;
+      return stubFor(env, decodeURIComponent(g[1]), "main").fetch(new Request(inner, req));
+    }
     if (url.pathname === "/mcp") {
       // MCP tools dispatch through the same authenticated API path as everything else
       const dispatch = async (method: "GET" | "POST", path: string, body?: unknown) => {
