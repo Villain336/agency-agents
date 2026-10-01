@@ -3,7 +3,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
   "durable_objects": {
-    "bindings": [{ "name": "REPO", "class_name": "RepoDO" }]
+    "bindings": [{ "name": "REPO", "class_name": "RepoDO" }, { "name": "REGISTRY", "class_name": "RegistryDO" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepoDO"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepoDO"] }, { "tag": "v2", "new_sqlite_classes": ["RegistryDO"] }]
 }

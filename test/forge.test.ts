@@ -233,3 +233,28 @@ test("weave.json: invalid JSON or unknown shapes are rejected before landing; se
   assert.deepEqual(r.config.webhooks, [], "webhooks and mirrors cannot be set from a file in the repo");
   assert.equal(r.config.mirror, undefined);
 });
+
+// ---------------------------------------------------------------- forks
+test("forks: copy history up to a revision, then diverge independently", () => {
+  const r = mk();
+  for (const [i, c] of ["x", "y", "z"].entries()) {
+    r.open({ id: "s" + i, agent: "bot", goal: "g" + i });
+    r.write("s" + i, "a.ts", c);
+    r.submit("s" + i);
+  }
+  r.createTag("early", { rev: 2, tagger: "a" });
+  r.createTag("late", { rev: 4, tagger: "a" });
+  const f = Repo.fromSnapshot(r.snapshot(3), { repo: "up" });
+  assert.equal(f.s.rev, 3);
+  assert.equal(f.head("a.ts"), "y");
+  assert.equal(f.fileAt("a.ts", 1), "1\n2\n3");
+  assert.deepEqual(f.listTags().map((t) => t.name), ["early"]);
+  assert.deepEqual(f.config.forkedFrom, { repo: "up", rev: 3 });
+  assert.equal(f.verifyChain().ok, true);
+  assert.notEqual(f.s.secrets.signingKey, r.s.secrets.signingKey);
+  f.open({ id: "f1", agent: "bob", goal: "diverge" });
+  f.write("f1", "a.ts", "forked");
+  assert.equal(f.submit("f1").rev, 4);
+  assert.equal(r.head("a.ts"), "z", "the upstream is untouched");
+  assert.throws(() => r.snapshot(99), /revision/);
+});

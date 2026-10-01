@@ -5,6 +5,6 @@
   "compatibility_date": "2025-01-01",
   "vars": { "WEAVE_ADMIN_TOKEN": "test-admin-token" },
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "weave-test-blobs" }],
-  "durable_objects": { "bindings": [{ "name": "REPO", "class_name": "RepoDO" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepoDO"] }]
+  "durable_objects": { "bindings": [{ "name": "REPO", "class_name": "RepoDO" }, { "name": "REGISTRY", "class_name": "RegistryDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepoDO"] }, { "tag": "v2", "new_sqlite_classes": ["RegistryDO"] }]
 }

@@ -76,6 +76,8 @@ export interface Config {
   mirror?: { url: string };
   /** hot-spot merge strategies: list-aware merging (default on) and union paths (globs, default none) */
   merge: { lists: boolean; union: string[] };
+  /** set on forks: where this repository's history was copied from */
+  forkedFrom?: { repo: string; rev: number };
 }
 
 export interface Conflict {
@@ -1267,6 +1269,33 @@ export class Repo {
     const eligible = ranked.filter((x) => x.need !== "human" || kind === "human" || kind === "admin" || kind === "unknown");
     const budget = this.policy().attentionBudget;
     return { budget, next: eligible.slice(0, budget), deferred: eligible.slice(budget), notForYou: ranked.filter((x) => !eligible.includes(x)) };
+  }
+
+  // ---- forks ----------------------------------------------------------------
+  /** Everything a fork needs: history up to `rev` (file versions, commits, tags, releases). No sessions, identities or secrets. */
+  snapshot(rev = this.s.rev) {
+    if (!Number.isInteger(rev) || rev < 0 || rev > this.s.rev) throw new WeaveError(`revision must be an integer between 0 and r${this.s.rev}`);
+    const files: State["files"] = {};
+    for (const [p, vs] of Object.entries(this.s.files)) {
+      const keep = vs.filter((v) => v.rev <= rev);
+      if (keep.length) files[p] = keep;
+    }
+    const tags = Object.fromEntries(Object.entries(this.s.tags).filter(([, x]) => x.rev <= rev));
+    const releases = Object.fromEntries(Object.entries(this.s.releases).filter(([k]) => k in tags));
+    return { rev, files, commits: this.s.commits.filter((c) => c.rev <= rev), tags, releases };
+  }
+  /** A new repository holding a copy of another's history. It has its own signing key, identities and config. */
+  static fromSnapshot(snap: ReturnType<Repo["snapshot"]>, from: { repo: string }, now?: () => number): Repo {
+    const r = new Repo(undefined, now);
+    r.s.rev = snap.rev;
+    r.s.files = snap.files;
+    r.s.commits = snap.commits;
+    r.s.tags = snap.tags;
+    r.s.releases = snap.releases;
+    r.s.mirror.lastRev = snap.rev;
+    r.s.config.forkedFrom = { repo: from.repo, rev: snap.rev };
+    r.log("forked", `forked from ${from.repo} at r${snap.rev}`);
+    return r;
   }
 
   // ---- tasks (agent-native issues) ---------------------------------------
