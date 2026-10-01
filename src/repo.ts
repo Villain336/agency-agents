@@ -876,6 +876,26 @@ export class Repo {
     return s;
   }
 
+  /** Resolve a conflicted path by supplying the final merged file (the easy path for agents). */
+  resolveWith(id: string, path: string, content: string, actor?: Actor) {
+    const s = this.session(id);
+    this.assertOwner(s, actor);
+    if (!s.conflicts.some((x) => x.path === path)) {
+      const fresh = this.mergeAll(s);
+      const c = fresh.conflicts.find((x) => x.path === path);
+      if (!c) throw new WeaveError(`no conflict on ${path} against the current trunk`, 404);
+      s.conflicts = fresh.conflicts;
+    }
+    s.edits[path] = content;
+    s.pathBase[path] = this.s.rev;
+    s.conflicts = s.conflicts.filter((x) => x.path !== path);
+    s.verified = undefined;
+    s.approvals = [];
+    this.log("resolve", `${s.agent} resolved ${path}`, s);
+    if (!s.conflicts.length) s.status = "active";
+    return s;
+  }
+
   /** A verifier (test runner, reviewer agent) attests the merged result is sound, or sends it back. */
   verify(id: string, verifier: string, passed: boolean, note = "") {
     const s = this.session(id);

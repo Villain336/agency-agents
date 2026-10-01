@@ -474,3 +474,27 @@ test("pump only re-evaluates queued sessions that can actually change state", ()
   assert.ok(submits <= 2, `expected a's own submit only, got ${submits} submits`);
   assert.equal(r.session("b").status, "verifying");
 });
+
+test("resolve by providing the final merged file", () => {
+  const r = mk({ "f.js": "a\nb\nc\nd\ne\n" });
+  r.open({ id: "x", agent: "alice", goal: "g" });
+  r.open({ id: "y", agent: "bruno", goal: "g" });
+  r.write("x", "f.js", "a\nALICE\nc\nd\ne\n");
+  r.write("y", "f.js", "a\nBRUNO\nc\nd\nE2\n");
+  r.submit("x");
+  assert.equal(r.submit("y").status, "conflicted");
+  r.resolveWith("y", "f.js", "a\nALICE+BRUNO\nc\nd\nE2\n");
+  assert.equal(r.session("y").status, "active");
+  assert.equal(r.submit("y").status, "landed");
+  assert.equal(r.head("f.js"), "a\nALICE+BRUNO\nc\nd\nE2\n");
+});
+
+test("resolveWith requires an actual conflict on that path and respects ownership", () => {
+  const r = mk({ "f.js": "a\nb\nc\n" });
+  const owner = actor(r, "owner");
+  const other = actor(r, "other");
+  r.open({ id: "s", agent: "owner", goal: "g", actor: owner });
+  r.write("s", "f.js", "a\nB\nc\n", owner);
+  assert.throws(() => r.resolveWith("s", "f.js", "x", owner), /no conflict/);
+  assert.throws(() => r.resolveWith("s", "f.js", "x", other), /belongs to owner/);
+});

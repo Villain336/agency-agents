@@ -116,7 +116,7 @@ export function route(c: Ctx): unknown {
       if (sub === "file") return (repo.write(id, body.path, body.content, c.actor, body.basedOn), { ok: true });
       if (sub === "intent") return { warnings: repo.declare(id, body.paths ?? []) };
       if (sub === "submit") return repo.submit(id, body.message, c.actor);
-      if (sub === "resolve") return repo.resolve(id, body.path, body.choices ?? body.how, c.actor);
+      if (sub === "resolve") return typeof body.content === "string" ? repo.resolveWith(id, body.path, body.content, c.actor) : repo.resolve(id, body.path, body.choices ?? body.how, c.actor);
       if (sub === "rerun") return repo.rerunChecks(id);
       if (sub === "abandon") return (repo.abandon(id, c.actor), { ok: true });
       if (sub === "verify") return repo.verify(id, who(c, "verifier"), !!body.passed, body.note);

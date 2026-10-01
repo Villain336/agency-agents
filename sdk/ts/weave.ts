@@ -72,6 +72,8 @@ export class Weave {
   submit = (id: string, message?: string) => this.request<SubmitResult>("POST", `sessions/${id}/submit`, { message });
   session = (id: string) => this.request("GET", `sessions/${id}`);
   resolve = (id: string, path: string, how: "ours" | "theirs" | "both" | unknown[]) => this.request("POST", `sessions/${id}/resolve`, Array.isArray(how) ? { path, choices: how } : { path, how });
+  /** Resolve a conflicted path by supplying the final merged file. */
+  resolveWith = (id: string, path: string, content: string) => this.request("POST", `sessions/${id}/resolve`, { path, content });
   rerunChecks = (id: string) => this.request<SubmitResult>("POST", `sessions/${id}/rerun`);
   abandon = (id: string) => this.request("POST", `sessions/${id}/abandon`);
 
