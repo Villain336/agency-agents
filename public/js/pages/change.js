@@ -5,6 +5,7 @@ import { agentChip, diffFile, emptyState, errorBox, link, md, riskBadge, setAllD
 import { add, clear, field, h, icon, openDialog, toast } from "../dom.js";
 import { buildHash } from "../router.js";
 import { plural } from "../time.js";
+import { ownerRef, ownerSummary } from "../forge.js";
 import { evidenceList } from "./commit.js";
 
 const LIVE = ["active", "conflicted", "needs_verify", "verifying", "in_review"];
@@ -207,6 +208,7 @@ export async function render(ctx) {
     const evidence = pack?.evidence ?? s.evidence ?? [];
     side.appendChild(h("section", { class: "card" }, h("h2", { class: "card-title", text: "Checks" }), evidenceList(evidence)));
     if ((pack?.previews ?? s.previews)?.length) side.appendChild(h("section", { class: "card" }, h("h2", { class: "card-title", text: "Previews" }), h("ul", { class: "plain" }, (pack?.previews ?? s.previews).map((u) => h("li", {}, h("a", { href: u, target: "_blank", rel: "noopener noreferrer nofollow", class: "ext" }, u))))));
+    if (pack?.requiredOwners?.length) side.appendChild(ownersCard(pack.requiredOwners));
     const appr = pack?.approvals ?? s.approvals ?? [];
     side.appendChild(h("section", { class: "card" }, h("h2", { class: "card-title", text: "Approvals" }), appr.length ? h("ul", { class: "plain" }, appr.map((a) => h("li", {}, agentChip(a.by), h("span", { class: "badge", text: a.kind }), a.ts ? timeEl(a.ts) : null))) : h("p", { class: "muted", text: risk?.need === "none" ? "Not required: low risk lands on evidence." : "No approvals yet." }), s.verified ? h("p", { class: "small" }, "Verified by ", agentChip(s.verified.by)) : null));
     if (pack?.semantic?.length) side.appendChild(h("section", { class: "card" }, h("h2", { class: "card-title", text: "Interactions with concurrent work" }), h("ul", { class: "plain small" }, pack.semantic.map((k) => h("li", { text: k.detail ?? JSON.stringify(k) })))));
@@ -274,4 +276,15 @@ function parseVisible(patch) {
     if (c === "+" || c === " ") out.push(n++);
   }
   return out;
+}
+
+// ---- code owners card: one row per matching rule, satisfied or pending ---------------------------
+function ownersCard(req) {
+  const sum = ownerSummary(req);
+  return h("section", { class: "card owners-card", aria: { label: "Code owners" } },
+    h("div", { class: "card-title-row" }, h("h2", { class: "card-title", text: "Code owners" }), h("span", { class: "badge " + (sum.pending ? "risk-medium" : "ok"), text: sum.pending ? `${sum.pending} pending` : "all satisfied" })),
+    h("ul", { class: "plain owner-list" }, req.map((r) => h("li", { class: "owner-rule " + (r.satisfied ? "sat" : "pend") },
+      h("div", { class: "owner-status" }, icon(r.satisfied ? "check" : "clock", 14), h("span", { class: "sr-only", text: r.satisfied ? "Satisfied: " : "Pending: " }), h("code", { class: "mono break", text: r.pattern })),
+      h("div", { class: "owner-names" }, r.owners.map((o) => { const x = ownerRef(o); return h("span", { class: "label" + (x.kind === "team" ? " is-team" : ""), text: o }); })),
+      h("div", { class: "dim small", text: r.satisfied ? "An owner has approved." : "Needs approval from one of these owners." })))));
 }

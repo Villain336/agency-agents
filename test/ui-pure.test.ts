@@ -130,3 +130,58 @@ test("time: relative formatting", () => {
   assert.equal(fmtBytes(2048), "2.0 KB");
   assert.equal(fmtDuration(90_000), "1m 30s");
 });
+
+// ---- forge helpers: owners, runs, packages, routes ---------------------------------------------
+// @ts-ignore
+import { cleanOwnerRules, latestByWorkflow, ownerRef, ownerSummary, packageSnippets, parseList, pickVersion, runPillClass, sortRuns, triggerText } from "../public/js/forge.js";
+
+test("forge: parseList and ownerRef", () => {
+  assert.deepEqual(parseList(" maria, team:core  maria\nbot,"), ["maria", "team:core", "bot"]);
+  assert.deepEqual(ownerRef("team:core"), { kind: "team", name: "core" });
+  assert.deepEqual(ownerRef("maria"), { kind: "identity", name: "maria" });
+});
+
+test("forge: cleanOwnerRules validates and drops blank rows", () => {
+  assert.deepEqual(cleanOwnerRules([{ pattern: " src/auth/ ", owners: "team:core, maria" }, { pattern: "", owners: "" }]), { rules: [{ pattern: "src/auth/", owners: ["team:core", "maria"] }], error: "" });
+  assert.match(cleanOwnerRules([{ pattern: "src/", owners: "" }]).error, /needs at least one owner/);
+  assert.match(cleanOwnerRules([{ pattern: "", owners: "maria" }]).error, /no path pattern/);
+  assert.match(cleanOwnerRules([{ pattern: "a/", owners: "team:" }]).error, /team name/);
+});
+
+test("forge: ownerSummary counts pending", () => {
+  assert.deepEqual(ownerSummary([{ satisfied: true }, { satisfied: false }, { satisfied: false }]), { total: 3, pending: 2, satisfied: 1 });
+  assert.deepEqual(ownerSummary(undefined), { total: 0, pending: 0, satisfied: 0 });
+});
+
+test("forge: runs sort numerically, newest first, and latest per workflow", () => {
+  const runs = [{ id: "w2", workflow: "a" }, { id: "w10", workflow: "a" }, { id: "w3", workflow: "b" }];
+  assert.deepEqual(sortRuns(runs).map((r: any) => r.id), ["w10", "w3", "w2"]);
+  assert.equal(latestByWorkflow(runs).get("a").id, "w10");
+  assert.equal(runPillClass("passed"), "pill run-passed");
+  assert.equal(runPillClass("weird"), "pill run-unknown");
+  assert.equal(triggerText({ trigger: "tag", ref: "v1", rev: 3, by: "m" }), "tag v1");
+  assert.equal(triggerText({ trigger: "landed", rev: 3, by: "m" }), "landing r3");
+  assert.equal(triggerText({ trigger: "manual", rev: 3, by: "m" }), "manual by m");
+});
+
+test("forge: package snippets encode scope and repo; pickVersion prefers the requested version", () => {
+  const s = packageSnippets({ origin: "https://w.test", name: "@orbit/client", version: "1.2.0", file: "dist/a b.js", repo: "docs-site" });
+  assert.equal(s.url, "https://w.test/api/packages/%40orbit%2Fclient/1.2.0/files/dist%2Fa%20b.js?repo=docs-site");
+  assert.match(s.curl, /base64 -d > a_b\.js$/);
+  assert.ok(!packageSnippets({ origin: "o", name: "n", version: "1.0.0", file: "f", repo: "default" }).url.includes("?repo"));
+  const rel = [{ version: "1.0.0" }, { version: "1.1.0", yanked: "x" }, { version: "1.2.0" }];
+  assert.equal(pickVersion(rel, "1.1.0", "1.2.0").version, "1.1.0");
+  assert.equal(pickVersion(rel, undefined, "1.2.0").version, "1.2.0");
+  assert.equal(pickVersion([{ version: "1.0.0", yanked: "x" }], undefined, undefined).version, "1.0.0");
+});
+
+test("router: run and package routes round-trip", () => {
+  assert.deepEqual(parseHash("#/run/w3").params, { id: "w3" });
+  assert.equal(parseHash("#/runs").name, "runs");
+  const p = parseHash("#/package/%40orbit%2Fclient?v=1.2.0");
+  assert.equal(p.name, "package");
+  assert.equal(p.params.name, "@orbit/client");
+  assert.equal(parseHash(buildHash("package", { name: "@orbit/client" })).params.name, "@orbit/client");
+  assert.equal(sectionOf("run"), "runs");
+  assert.equal(sectionOf("package"), "packages");
+});

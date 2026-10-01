@@ -12,7 +12,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileDiff } from "../src/diff.ts";
 import { diffHunks, splitLines } from "../src/merge.ts";
-import { applyOps, BASE, COMMITS, LONG_NAME, type Op } from "./fixtures.ts";
+import { applyOps, BASE, COMMITS, FORGE_CONFIG, FORGE_PACKAGES, FORGE_RUNS, FORGE_TEAMS, LONG_NAME, type Op } from "./fixtures.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PUBLIC = join(ROOT, "public");
@@ -46,9 +46,13 @@ class Repo {
   notifications: any[] = [];
   tags: any[] = [];
   releases: any[] = [];
-  seq = { event: 0, comment: 0, task: 0, notif: 0, session: 0 };
+  seq = { event: 0, comment: 0, task: 0, notif: 0, session: 0, run: 0 };
   config: any;
   identities: any[];
+  teams: any[] = [];
+  secrets: string[] = [];
+  runs: any[] = [];
+  packages: any[] = [];
   now = Date.now();
 
   name: string;
@@ -72,7 +76,22 @@ class Repo {
       const [name, kind, sc] = x.split(":");
       return { id: `id${i + 1}`, name, kind, scopes: sc.split(","), paths: kind === "agent" ? ["src/", "test/"] : [], budget: { sessionsPerHour: 60 }, model: kind === "agent" ? "claude-sonnet-5" : undefined, createdAt: this.now - (20 - i) * 24 * H, disabled: name === "test-writer" && false };
     });
-    if (name === "default") this.seedExtras();
+    if (name === "default") { this.seedExtras(); this.seedForge(); }
+  }
+
+  seedForge() {
+    const now = Date.now();
+    Object.assign(this.config, FORGE_CONFIG);
+    this.teams = FORGE_TEAMS.map((t) => ({ ...t, createdBy: "maria", createdAt: now - 9 * 24 * H }));
+    this.secrets = ["DEPLOY_TOKEN", "NPM_TOKEN", "SLACK_WEBHOOK"];
+    this.runs = FORGE_RUNS.map((r, i) => ({ ...r, id: r.id, command: this.config.workflows.find((w: any) => w.name === r.workflow).command, timeoutMs: 600000, secrets: this.config.workflows.find((w: any) => w.name === r.workflow).secrets ?? [], createdAt: now - r.ageMin * 60e3, finishedAt: r.durationMs !== undefined ? now - r.ageMin * 60e3 + r.durationMs : undefined }));
+    this.seq.run = FORGE_RUNS.length;
+    this.packages = FORGE_PACKAGES.map((p) => ({ ...p, publishedAt: now - p.ageD * 24 * H, files: p.files.map((f) => ({ name: f.name, size: f.content.length * (f.scale ?? 1), sha256: sha(f.content), contentBase64: Buffer.from(f.content).toString("base64") })) }));
+  }
+  ownersFor(o: string): string[] { return o.startsWith("team:") ? (this.teams.find((t) => t.name === o.slice(5))?.members ?? []) : [o]; }
+  requiredOwners(s: any) {
+    const paths = Object.keys(s.edits ?? {});
+    return (this.config.owners ?? []).filter((r: any) => paths.some((p) => p.startsWith(r.pattern.replace(/\*+$/, "")) || p === r.pattern)).map((r: any) => ({ pattern: r.pattern, owners: r.owners, satisfied: (s.approvals ?? []).some((a: any) => r.owners.some((o: string) => this.ownersFor(o).includes(a.by))) }));
   }
 
   land(rev: number, agent: string, message: string, changes: Record<string, string | null>, ts: number, extra: { merged?: boolean; risk?: any; model?: string; goal?: string } = {}) {
@@ -136,12 +155,14 @@ class Repo {
     const files = Object.entries(s.edits as Record<string, string | null>).filter(([p]) => !s.conflictPaths.includes(p)).map(([p, after]) => s.status === "landed" ? fileDiff(p, this.at(p, (s.landedRev ?? 1) - 1), after) : fileDiff(p, this.head(p), after));
     const behindBy = s.status === "landed" ? 0 : this.rev - s.baseRev;
     const warnings: string[] = [...(s.warnings ?? [])];
+    const requiredOwners = this.requiredOwners(s);
+    if (!["landed", "rejected"].includes(s.status)) for (const o of requiredOwners.filter((x: any) => !x.satisfied)) warnings.push(`Needs approval from a code owner of ${o.pattern}: ${o.owners.join(", ")}.`);
     return {
       warnings, behindBy, id: s.id, agent: s.agent, goal: s.goal, status: s.status, model: s.model, baseRev: s.baseRev, headRev: this.rev,
       risk: s.risk, need: s.risk?.need, approvals: s.approvals, semantic: s.risks, conflicts: s.conflicts.map((c: any) => ({ path: c.path, kind: c.kind })),
       evidence: s.evidence.map((e: any) => ({ check: e.check, passed: e.passed, rev: e.rev, runner: e.runner ?? "ci-runner", current: e.current ?? true })),
       previews: s.previews, stats: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) },
-      files, comments: this.comments.filter((c) => c.sessionId === s.id),
+      files, comments: this.comments.filter((c) => c.sessionId === s.id), requiredOwners,
     };
   }
 
@@ -318,6 +339,21 @@ export async function startMock(opts: MockOptions = {}) {
       if (a === "commits") return R.commits.slice(-Math.min(100, Number(q.get("limit") ?? 20))).reverse().map((c) => ({ rev: c.rev, agent: c.agent, message: c.message, paths: c.paths, merged: c.merged, ts: c.ts, risk: c.risk?.tier, hash: c.hash }));
       if (a === "config") return R.config;
       if (a === "identities") return R.identities;
+      if (a === "teams" && !b) return R.teams;
+      if (a === "teams") { const t = R.teams.find((x) => x.name === b); if (!t) throw new HttpError(404, `no such team: ${b}`); return t; }
+      if (a === "workflows") return R.config.workflows ?? [];
+      if (a === "runs" && !b) return R.runs.filter((r) => (!q.get("workflow") || r.workflow === q.get("workflow")) && (!q.get("status") || r.status === q.get("status"))).sort((x, y) => Number(y.id.slice(1)) - Number(x.id.slice(1))).map(({ output, ...r }) => r);
+      if (a === "runs") { const r = R.runs.find((x) => x.id === b); if (!r) throw new HttpError(404, `no such run: ${b}`); return r; }
+      if (a === "secrets") return R.secrets.slice().sort().map((name) => ({ name }));
+      if (a === "packages" && !b) return [...new Set(R.packages.map((p) => p.name))].sort().map((name) => { const vs = R.packages.filter((p) => p.name === name); const live = vs.filter((v) => !v.yanked); const stable = live.filter((v) => !v.version.includes("-")); return { name, latest: (stable.length ? stable : live).slice(-1)[0]?.version, versions: vs.map((v) => v.version), description: vs[0].description, updatedAt: Math.max(...vs.map((v) => v.publishedAt)) }; });
+      if (a === "packages") {
+        const vs = R.packages.filter((p) => p.name === decodeURIComponent(b));
+        if (!vs.length) throw new HttpError(404, `no such package: ${decodeURIComponent(b)}`);
+        const strip = (v: any) => ({ ...v, files: v.files.map(({ contentBase64, ...f }: any) => f) });
+        if (c) { const v = vs.find((x) => x.version === c); if (!v) throw new HttpError(404, `no such version: ${b}@${c}`); return strip(v); }
+        const live = vs.filter((v) => !v.yanked); const stable = live.filter((v) => !v.version.includes("-"));
+        return { name: vs[0].name, latest: (stable.length ? stable : live).slice(-1)[0]?.version, versions: vs.map((v) => v.version), description: vs[0].description, updatedAt: Math.max(...vs.map((v) => v.publishedAt)), releases: vs.map(strip) };
+      }
       if (a === "events") return events(R, q);
       if (a === "review" && b === "queue") { const items = R.sessions.filter((s) => s.status === "in_review").map((s) => ({ id: s.id, agent: s.agent, goal: s.goal, score: s.risk?.score ?? 0, tier: s.risk?.tier, need: s.risk?.need, waitingMs: Date.now() - s.createdAt, claimedBy: s.claim?.by })).sort((x, y) => y.score - x.score); return { budget: 5, next: items.slice(0, 5), deferred: items.slice(5), notForYou: [] }; }
       if (a === "provenance" && b) { const cm = R.commit(Number(b)); return { rev: cm.rev, hash: cm.hash, signature: sha("sig" + cm.hash), record: { rev: cm.rev, sessionId: cm.sessionId, goal: cm.goal, actor: { id: "x", name: cm.agent, kind: cm.agent === "maria" ? "human" : "agent", model: cm.model }, promptHash: sha("prompt" + cm.rev), baseRev: cm.rev - 1, paths: cm.paths, merged: cm.merged, risk: cm.risk, semantic: cm.merged ? [{ detail: "edits overlapped with a concurrent change and were merged by Weave" }] : [], autoResolved: cm.merged ? [{ path: cm.paths[0], count: 1 }] : [], evidence: cm.evidence, approvals: cm.approvals.map((x: any) => ({ by: x.by, kind: x.kind })), verifiedBy: cm.risk?.tier === "high" ? "ci-runner" : undefined, ts: cm.ts, prevHash: sha("prev" + cm.rev) } }; }
@@ -383,7 +419,18 @@ export async function startMock(opts: MockOptions = {}) {
     }
 
     // ---- writes
-    if (a === "config") { for (const k of ["reviewPaths", "checks", "policy", "merge", "mirror"]) if (body[k] !== undefined) R.config[k] = body[k]; if (body.webhooks) R.config.webhooks = body.webhooks.map((w: any, i: number) => ({ id: w.id ?? `wh${i + 1}`, url: w.url, secret: w.secret ? "***" : "", events: w.events?.length ? w.events : ["*"] })); R.event("config", "repository configuration updated"); return R.config; }
+    if (a === "teams" && !b) { if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(body.name ?? "")) throw new HttpError(400, "invalid team name"); if (R.teams.some((t) => t.name === body.name)) throw new HttpError(409, `team already exists: ${body.name}`); const t = { name: body.name, members: [...new Set<string>(body.members ?? [])], description: body.description ?? "", createdBy: "maria", createdAt: Date.now() }; R.teams.push(t); return t; }
+    if (a === "teams" && b && c === "delete") { const i = R.teams.findIndex((t) => t.name === b); if (i < 0) throw new HttpError(404, `no such team: ${b}`); R.teams.splice(i, 1); return { ok: true }; }
+    if (a === "teams" && b) { const t = R.teams.find((x) => x.name === b); if (!t) throw new HttpError(404, `no such team: ${b}`); t.members = [...new Set<string>([...t.members, ...(body.add ?? [])])].filter((m) => !(body.remove ?? []).includes(m)); if (body.description !== undefined) t.description = body.description; return t; }
+    if (a === "secrets" && !b) { if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(body.name ?? "")) throw new HttpError(400, "invalid secret name"); if (!R.secrets.includes(body.name)) R.secrets.push(body.name); return { ok: true, name: body.name }; }
+    if (a === "secrets" && b && c === "delete") { R.secrets = R.secrets.filter((s) => s !== b); return { ok: true }; }
+    if (a === "workflows" && b && c === "run") {
+      const w = (R.config.workflows ?? []).find((x: any) => x.name === decodeURIComponent(b)); if (!w) throw new HttpError(404, `no such workflow: ${b}`);
+      if (!w.on.includes("manual")) throw new HttpError(400, `workflow ${w.name} is not manual`);
+      const run = { id: `w${++R.seq.run}`, workflow: w.name, trigger: "manual", rev: R.rev, by: "maria", command: w.command, timeoutMs: 600000, secrets: w.secrets ?? [], status: "queued", createdAt: Date.now() }; R.runs.push(run); return run;
+    }
+    if (a === "packages" && b && d === "yank") { const v = R.packages.find((p) => p.name === decodeURIComponent(b) && p.version === c); if (!v) throw new HttpError(404, `no such version: ${b}@${c}`); v.yanked = body.reason || "yanked"; return { ok: true }; }
+    if (a === "config") { if (Array.isArray(body.owners)) R.config.owners = body.owners; if (Array.isArray(body.workflows)) R.config.workflows = body.workflows; for (const k of ["reviewPaths", "checks", "policy", "merge", "mirror"]) if (body[k] !== undefined) R.config[k] = body[k]; if (body.webhooks) R.config.webhooks = body.webhooks.map((w: any, i: number) => ({ id: w.id ?? `wh${i + 1}`, url: w.url, secret: w.secret ? "***" : "", events: w.events?.length ? w.events : ["*"] })); R.event("config", "repository configuration updated"); return R.config; }
     if (a === "identities" && !b) { const i = { id: "id" + (R.identities.length + 1), name: body.name, kind: body.kind ?? "agent", scopes: body.kind === "admin" ? ["read", "write", "review", "verify", "runner", "admin"] : ["read", "write"], paths: body.paths ?? [], budget: {}, model: body.model, createdAt: Date.now() }; R.identities.push(i); return { identity: i, token: "wv_" + sha(String(Math.random())).slice(0, 40) }; }
     if (a === "identities" && b && c === "revoke") { const i = R.identities.find((x) => x.id === b); if (!i) throw new HttpError(404, "no such identity"); i.disabled = true; return { ok: true }; }
     if (a === "tasks" && !b) { const n = ++R.seq.task; const t = { id: "t" + n, number: n, title: String(body.title ?? "").trim(), body: body.body ?? "", labels: body.labels ?? [], priority: body.priority ?? "normal", status: "open", creator: who("author"), sessions: [], comments: [], dependsOn: body.dependsOn ?? [], createdAt: Date.now(), updatedAt: Date.now() }; if (!t.title) throw new HttpError(400, "title is required"); R.tasks.push(t); return t; }
