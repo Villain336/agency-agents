@@ -49,18 +49,20 @@ All routes accept `?repo=<name>` (default `default`).
 | `POST /api/sessions/:id/resolve` `{path, how \| choices}` | Resolve a conflicted path |
 | `POST /api/sessions/:id/review` `{reviewer, approve}` | Review a protected-path change |
 | `GET /api/state` | Trunk, commits, sessions, event log |
+| `GET /api/export` | Trunk history as a `git fast-import` stream (`curl .../api/export \| git fast-import`) |
 
 ## Layout
 
 - `src/merge.ts`: dependency-free diff3 merge
 - `src/repo.ts`: sessions, intent, landing, review (pure logic, fully unit-tested)
 - `src/index.ts`: Worker + `RepoDO` Durable Object
+- `src/export.ts`: Weave history to real Git commits
 - `src/dashboard.ts`: live dashboard
 - `src/scenario.ts`: the scripted 6-agent demo
 
 ## Roadmap
 
-Git import/export (so Weave can front an existing repo), semantic (AST-level) merging, and a
+Git import (export already works), semantic (AST-level) merging, and a
 WebSocket event stream in place of dashboard polling.
 
 ## License

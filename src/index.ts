@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Repo, WeaveError, emptyState, type State } from "./repo.ts";
 import { SCENARIO, SEED } from "./scenario.ts";
+import { exportFastImport } from "./export.ts";
 import { DASHBOARD } from "./dashboard.ts";
 
 interface Env {
@@ -23,6 +24,8 @@ export class RepoDO extends DurableObject {
     const repo = await this.load();
     const url = new URL(req.url);
     const parts = url.pathname.split("/").filter(Boolean).slice(1); // drop "api"
+    if (req.method === "GET" && parts[0] === "export")
+      return new Response(exportFastImport(repo.s), { headers: { "content-type": "text/plain; charset=utf-8" } });
     const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     try {
       const out = this.route(repo, req.method, parts, url, body);
