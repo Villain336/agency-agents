@@ -1,0 +1,248 @@
+{
+  "generatedAt": "2026-10-01T19:10:11.908Z",
+  "params": {
+    "ciSec": 60,
+    "reworkSec": 15,
+    "verifySec": 10,
+    "note": "virtual time; build concurrency C is the queue batch size and the number of Weave runners"
+  },
+  "rows": [
+    {
+      "agents": 20,
+      "skew": 0,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1270,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 700,
+          "p95Sec": 1270
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 20,
+          "makespanSec": 368,
+          "ciRuns": 20,
+          "retries": 4,
+          "conflicts": 4,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 368
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 20,
+          "makespanSec": 270,
+          "ciRuns": 20,
+          "retries": 3,
+          "conflicts": 3,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 270
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 0,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3073,
+          "ciRuns": 1274,
+          "retries": 1224,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1595,
+          "p95Sec": 2949
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 50,
+          "makespanSec": 801,
+          "ciRuns": 50,
+          "retries": 14,
+          "conflicts": 14,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 726
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 50,
+          "makespanSec": 706,
+          "ciRuns": 50,
+          "retries": 11,
+          "conflicts": 11,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 624
+        }
+      ]
+    },
+    {
+      "agents": 20,
+      "skew": 1,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 20,
+          "makespanSec": 1330,
+          "ciRuns": 210,
+          "retries": 190,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 705,
+          "p95Sec": 1330
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 20,
+          "makespanSec": 593,
+          "ciRuns": 20,
+          "retries": 22,
+          "conflicts": 22,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 593
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 20,
+          "makespanSec": 508,
+          "ciRuns": 20,
+          "retries": 16,
+          "conflicts": 16,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 20,
+          "p50Sec": 188,
+          "p95Sec": 508
+        }
+      ]
+    },
+    {
+      "agents": 50,
+      "skew": 1,
+      "concurrency": 5,
+      "results": [
+        {
+          "policy": "push-race",
+          "agents": 50,
+          "makespanSec": 3109,
+          "ciRuns": 1266,
+          "retries": 1216,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 1599,
+          "p95Sec": 2954
+        },
+        {
+          "policy": "queue(C=5)",
+          "agents": 50,
+          "makespanSec": 1191,
+          "ciRuns": 50,
+          "retries": 60,
+          "conflicts": 60,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 1041
+        },
+        {
+          "policy": "weave(train,R=5)",
+          "agents": 50,
+          "makespanSec": 1089,
+          "ciRuns": 50,
+          "retries": 48,
+          "conflicts": 48,
+          "verifications": 0,
+          "lostUpdates": 0,
+          "landed": 50,
+          "p50Sec": 366,
+          "p95Sec": 939
+        }
+      ]
+    }
+  ],
+  "detector": [
+    {
+      "category": "signature change vs new caller",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 200,
+      "rate": 1
+    },
+    {
+      "category": "body change vs existing caller edited",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 200,
+      "rate": 1
+    },
+    {
+      "category": "same function, different lines",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 17,
+      "rate": 0.085
+    },
+    {
+      "category": "transitive dependency (known miss)",
+      "shouldFlag": true,
+      "cases": 200,
+      "flagged": 0,
+      "rate": 0
+    },
+    {
+      "category": "independent changes (false positives)",
+      "shouldFlag": false,
+      "cases": 200,
+      "flagged": 0,
+      "rate": 0
+    },
+    {
+      "category": "independent edits to two functions (false positives)",
+      "shouldFlag": false,
+      "cases": 200,
+      "flagged": 0,
+      "rate": 0
+    }
+  ],
+  "mergeAgreement": {
+    "cases": 400,
+    "bothClean": 283,
+    "bothConflict": 115,
+    "weaveCleanGitConflict": 2,
+    "weaveConflictGitClean": 0,
+    "cleanDiffer": 1,
+    "agreement": 0.9925
+  }
+}
