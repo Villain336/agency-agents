@@ -1,5 +1,6 @@
 // Pure request router over a Repo. The Durable Object wraps this with auth + persistence.
 import { forgeRoute } from "./forge-api.ts";
+import { routeBrowse } from "./browse.ts";
 import { exportFastImport } from "./export.ts";
 import { LIVE, Repo, WeaveError, type Actor, type Kind, type Scope } from "./repo.ts";
 import { SCENARIO, SEED } from "./scenario.ts";
@@ -44,6 +45,8 @@ export function route(c: Ctx): unknown {
   const headState = () => ({ rev: repo.s.rev, files: repo.filesAt(), commits: repo.s.commits.slice(-50).map(({ provenance: _p, ...x }) => x), sessions: Object.values(repo.s.sessions).map(({ edits, conflicts, ...x }) => ({ ...x, edits: Object.fromEntries(Object.keys(edits).map((k) => [k, true])), conflictPaths: conflicts.map((k) => k.path) })), events: repo.s.events.slice(-100), reviewPaths: repo.config.reviewPaths, config: mask(repo), policy: repo.policy() });
 
   if (method === "GET") {
+    const b = routeBrowse(c);
+    if (b !== undefined) return b;
     if (a === "state") return headState();
     if (a === "status")
       return {
