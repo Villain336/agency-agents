@@ -13,9 +13,9 @@ h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)
 .lanes{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .lane{border:1px solid var(--line);border-radius:8px;padding:10px;background:#12151b}.lane b{display:block}.lane small{color:var(--dim)}
 .pill{display:inline-block;font-size:11px;border-radius:99px;padding:1px 8px;margin-top:6px;border:1px solid currentColor}
-.active{color:#6ea8fe}.landed{color:var(--ok)}.conflicted{color:var(--bad)}.in_review{color:var(--warn)}.rejected{color:var(--dim)}
+.active{color:#6ea8fe}.landed{color:var(--ok)}.conflicted{color:var(--bad)}.in_review,.needs_verify{color:var(--warn)}.rejected{color:var(--dim)}
 .ev{padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}.ev:last-child{border:0}.ev i{color:var(--dim);font-style:normal;margin-right:6px}
-.t-landed{color:var(--ok)}.t-conflict{color:var(--bad)}.t-overlap,.t-review_requested{color:var(--warn)}
+.t-landed{color:var(--ok)}.t-conflict{color:var(--bad)}.t-overlap,.t-review_requested,.t-needs_verify{color:var(--warn)}
 .note{background:#241a0d;border:1px solid #5b3a10;color:#ffd699;border-radius:8px;padding:8px 12px;margin-bottom:12px;min-height:38px}
 pre{margin:0;white-space:pre-wrap;color:#c9d1e3;font-size:12px}details{margin:6px 0}summary{cursor:pointer;color:var(--acc)}
 </style></head><body>
@@ -48,6 +48,7 @@ async function step(st){
   if(st.op==='write')await api('POST',base+'file',{path:st.path,content:st.content});
   if(st.op==='submit')await api('POST',base+'submit',{message:st.message});
   if(st.op==='resolve')await api('POST',base+'resolve',{path:st.path,how:st.how});
+  if(st.op==='verify')await api('POST',base+'verify',{verifier:st.verifier,passed:st.passed});
   if(st.op==='review')await api('POST',base+'review',{reviewer:st.reviewer,approve:st.approve});
 }
 $('reset').onclick=async()=>{await api('POST','reset',{});refresh()};

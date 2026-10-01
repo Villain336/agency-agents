@@ -17,6 +17,7 @@ for (const st of SCENARIO) {
   else if (st.op === "write") await call("POST", `sessions/${st.id}/file`, st);
   else if (st.op === "submit") console.log(`  submit ${st.id} ->`, (await call("POST", `sessions/${st.id}/submit`, st)).status);
   else if (st.op === "resolve") console.log(`  resolve ${st.id}:${st.path} (${st.how})`), await call("POST", `sessions/${st.id}/resolve`, st);
+  else if (st.op === "verify") console.log(`  verify ${st.id} ->`, (await call("POST", `sessions/${st.id}/verify`, st)).status);
   else if (st.op === "review") console.log(`  review ${st.id} ->`, (await call("POST", `sessions/${st.id}/review`, st)).status);
 }
 const s = await call("GET", "state");

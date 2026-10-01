@@ -48,6 +48,10 @@ export class RepoDO extends DurableObject {
       repo.setReviewPaths(["src/auth"]);
       return { ok: true };
     }
+    if (method === "POST" && a === "import") {
+      if (!b.files || typeof b.files !== "object") throw new WeaveError("body must be {files: {path: content}}");
+      return { rev: repo.seed(b.files, b.message ?? "import from git") };
+    }
     if (method === "POST" && a === "sessions" && !id) return repo.open(b);
     if (a === "sessions" && id) {
       if (method === "GET" && c === "file") return { path: url.searchParams.get("path"), content: repo.read(id, url.searchParams.get("path")!) };
@@ -56,6 +60,8 @@ export class RepoDO extends DurableObject {
       if (method === "POST" && c === "intent") return { warnings: repo.declare(id, b.paths ?? []) };
       if (method === "POST" && c === "submit") return repo.submit(id, b.message);
       if (method === "POST" && c === "resolve") return repo.resolve(id, b.path, b.choices ?? b.how);
+      if (method === "GET" && c === "preview") return repo.preview(id);
+      if (method === "POST" && c === "verify") return repo.verify(id, b.verifier ?? "verifier", !!b.passed, b.note);
       if (method === "POST" && c === "review") return repo.review(id, b.reviewer ?? "reviewer", !!b.approve, b.note);
       if (method === "POST" && c === "abandon") return (repo.abandon(id), { ok: true });
     }

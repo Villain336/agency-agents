@@ -3,9 +3,10 @@
 // trunk revision, edit an overlay, declare intent, and land atomically via a 3-way merge
 // against whatever trunk is *now*. Conflicts come back as structured data an agent can resolve.
 
+import { semanticRisk, type Risk } from "./semantic.ts";
 import { merge3, resolveSegments, splitLines, type Choice, type Segment } from "./merge.ts";
 
-export type Status = "active" | "conflicted" | "in_review" | "landed" | "rejected";
+export type Status = "active" | "conflicted" | "needs_verify" | "in_review" | "landed" | "rejected";
 
 export interface Conflict {
   path: string;
@@ -26,6 +27,9 @@ export interface Session {
   status: Status;
   conflicts: Conflict[];
   reviewer?: string;
+  /** concurrent-change interactions a verifier must sign off on before landing */
+  risks: Risk[];
+  verified?: { by: string; rev: number };
   landedRev?: number;
   createdAt: number;
 }
@@ -123,11 +127,11 @@ export class Repo {
   open(opts: { id?: string; agent: string; goal: string; intent?: string[] }): { session: Session; warnings: string[] } {
     const id = opts.id ?? `${opts.agent}-${Object.keys(this.s.sessions).length + 1}`;
     const existing = this.s.sessions[id];
-    if (existing && (existing.status === "active" || existing.status === "conflicted" || existing.status === "in_review"))
+    if (existing && !["landed", "rejected"].includes(existing.status))
       throw new WeaveError(`session ${id} is still ${existing.status}`, 409);
     const session: Session = {
       id, agent: opts.agent, goal: opts.goal, baseRev: this.s.rev, edits: {}, pathBase: {},
-      intent: opts.intent ?? [], status: "active", conflicts: [], createdAt: this.now(),
+      intent: opts.intent ?? [], status: "active", conflicts: [], risks: [], createdAt: this.now(),
     };
     this.s.sessions[id] = session;
     this.log("open", `${opts.agent} started: ${opts.goal}`, session);
@@ -159,14 +163,16 @@ export class Repo {
     if (s.status === "landed" || s.status === "rejected") throw new WeaveError(`session ${id} is ${s.status}`, 409);
     if (s.status === "conflicted") throw new WeaveError(`session ${id} has unresolved conflicts; resolve them first`, 409);
     s.edits[path] = content;
+    s.verified = undefined; // an attestation covers the content it saw
     if (!s.intent.includes(path)) s.intent.push(path);
     s.status = "active";
   }
 
   // ---- landing --------------------------------------------------------
-  private mergeAll(s: Session): { changes: Record<string, string | null>; conflicts: Conflict[]; merged: boolean } {
+  private mergeAll(s: Session): { changes: Record<string, string | null>; conflicts: Conflict[]; merged: boolean; risks: Risk[] } {
     const changes: Record<string, string | null> = {};
     const conflicts: Conflict[] = [];
+    const risks: Risk[] = [];
     let merged = false;
     for (const [path, theirs] of Object.entries(s.edits)) {
       const baseRev = s.pathBase[path] ?? s.baseRev;
@@ -181,13 +187,16 @@ export class Repo {
       if (ours === null || theirs === null) { whole("delete-modify"); continue; }
       const r = merge3(base, ours, theirs);
       if (r.conflicts) conflicts.push({ path, kind: "text", segments: r.segments });
-      else changes[path] = r.text;
+      else {
+        changes[path] = r.text;
+        risks.push(...semanticRisk(path, base, ours, theirs));
+      }
     }
-    return { changes, conflicts, merged };
+    return { changes, conflicts, merged, risks };
   }
 
   /** Try to land a session onto trunk atomically. */
-  submit(id: string, message?: string): { status: Status; rev?: number; conflicts?: Conflict[] } {
+  submit(id: string, message?: string): { status: Status; rev?: number; conflicts?: Conflict[]; risks?: Risk[] } {
     const s = this.session(id);
     if (s.status === "landed" || s.status === "rejected") throw new WeaveError(`session ${id} is ${s.status}`, 409);
     if (s.status === "in_review") return { status: "in_review" };
@@ -200,6 +209,12 @@ export class Repo {
       return { status: "conflicted", conflicts: r.conflicts };
     }
     s.conflicts = [];
+    s.risks = r.risks;
+    if (r.risks.length && !this.attested(s)) {
+      s.status = "needs_verify";
+      this.log("needs_verify", `${s.agent}'s change merged cleanly but interacts with concurrent work (${r.risks.map((k) => k.symbols[0] + ` in ${k.path}`).join(", ")}); needs a verifier`, s);
+      return { status: "needs_verify" as Status, risks: r.risks };
+    }
     const gated = Object.keys(s.edits).filter((p) => this.s.reviewPaths.some((rp) => p.startsWith(rp)));
     if (gated.length && !s.reviewer) {
       s.status = "in_review";
@@ -214,6 +229,35 @@ export class Repo {
       return { status: "landed" as Status, rev: this.s.rev };
     }
     return this.land(s, r.changes, r.merged, message);
+  }
+
+  /** An attestation holds while no later trunk commit has touched this session's paths. */
+  private attested(s: Session): boolean {
+    const v = s.verified;
+    if (!v) return false;
+    const paths = new Set(Object.keys(s.edits));
+    return !this.s.commits.some((c) => c.rev > v.rev && c.paths.some((p) => paths.has(p)));
+  }
+
+  /** Dry-run: what trunk would look like for this session's paths if it landed now. */
+  preview(id: string) {
+    const r = this.mergeAll(this.session(id));
+    return { baseRev: this.s.rev, merged: r.merged, files: r.changes, conflicts: r.conflicts, risks: r.risks };
+  }
+
+  /** A verifier (test runner, reviewer agent) attests the merged result is sound, or sends it back. */
+  verify(id: string, verifier: string, passed: boolean, note = "") {
+    const s = this.session(id);
+    if (s.status !== "needs_verify") throw new WeaveError(`session ${id} is not awaiting verification`, 409);
+    if (!passed) {
+      s.status = "active";
+      this.log("verify_failed", `${verifier} rejected the merged result of ${s.agent}'s change${note ? `: ${note}` : ""}`, s);
+      return { status: s.status };
+    }
+    s.verified = { by: verifier, rev: this.s.rev };
+    this.log("verified", `${verifier} verified ${s.agent}'s merged change`, s);
+    s.status = "active";
+    return this.submit(id);
   }
 
   private land(s: Session, changes: Record<string, string | null>, merged: boolean, message?: string) {
