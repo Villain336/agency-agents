@@ -172,9 +172,9 @@ export class Repo {
       const baseRev = s.pathBase[path] ?? s.baseRev;
       const base = this.fileAt(path, baseRev);
       const ours = this.head(path);
+      if (theirs === ours) { if (ours !== base) merged = true; continue; } // already on trunk
       if (ours === base) { changes[path] = theirs; continue; } // trunk untouched: fast-forward
       merged = true;
-      if (theirs === ours) continue; // someone landed the identical change
       const whole = (kind: Conflict["kind"]) =>
         conflicts.push({ path, kind, segments: [{ kind: "conflict", base: splitLines(base ?? ""), ours: splitLines(ours ?? ""), theirs: splitLines(theirs ?? "") }] });
       if (base === null) { whole("add-add"); continue; }
@@ -205,6 +205,13 @@ export class Repo {
       s.status = "in_review";
       this.log("review_requested", `${s.agent}'s change touches protected path(s) ${gated.join(", ")}; awaiting review`, s);
       return { status: "in_review" };
+    }
+    if (!Object.keys(r.changes).length) {
+      // every edit already matches trunk: nothing to commit
+      s.status = "landed";
+      s.landedRev = this.s.rev;
+      this.log("noop", `${s.agent}'s change was already on trunk; nothing to land`, s);
+      return { status: "landed" as Status, rev: this.s.rev };
     }
     return this.land(s, r.changes, r.merged, message);
   }

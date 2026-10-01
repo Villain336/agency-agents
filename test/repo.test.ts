@@ -68,3 +68,22 @@ test("delete vs modify is a conflict", () => {
   assert.equal(r.submit("s2").status, "landed");
   assert.equal(r.head("b.ts"), "changed");
 });
+
+test("submitting edits identical to trunk creates no empty commit", () => {
+  const r = mk();
+  r.open({ id: "s1", agent: "A", goal: "g1" });
+  r.write("s1", "b.ts", "x");
+  const before = r.s.commits.length;
+  assert.equal(r.submit("s1").status, "landed");
+  assert.equal(r.s.commits.length, before);
+});
+
+test("a landed session id can be reopened with fresh state", () => {
+  const r = mk();
+  r.open({ id: "s", agent: "A", goal: "g1", intent: ["a.ts"] });
+  r.write("s", "a.ts", "1\n2\n3\n4\nQ");
+  r.submit("s");
+  const { session } = r.open({ id: "s", agent: "B", goal: "g2" });
+  assert.deepEqual(session.edits, {});
+  assert.deepEqual(session.intent, []);
+});

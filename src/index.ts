@@ -43,9 +43,9 @@ export class RepoDO extends DurableObject {
       return { rev: repo.s.rev, files: Object.fromEntries(repo.listFiles().map((f) => [f, repo.head(f)])), commits: repo.s.commits.slice(-50), sessions: Object.values(repo.s.sessions), events: repo.s.events.slice(-100), reviewPaths: repo.s.reviewPaths };
     if (method === "GET" && a === "scenario") return { steps: SCENARIO };
     if (method === "POST" && a === "reset") {
-      this.repo = new Repo();
-      this.repo.seed(SEED, "initial import");
-      this.repo.setReviewPaths(["src/auth"]);
+      repo.s = emptyState(); // mutate in place so the post-request persist writes the fresh state
+      repo.seed(SEED, "initial import");
+      repo.setReviewPaths(["src/auth"]);
       return { ok: true };
     }
     if (method === "POST" && a === "sessions" && !id) return repo.open(b);
