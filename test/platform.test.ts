@@ -374,11 +374,11 @@ test("rejection reasons are visible to the author on the session", () => {
 });
 
 test("failed verification notes are visible to the author too", () => {
-  const r = mk({ "m.ts": "export function f() {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}\n" });
+  const r = mk({ "m.ts": "export function f() {\n  const a = 1;\n  const mid = 0;\n  const b = 2;\n  return a + b + mid;\n}\n" });
   r.open({ id: "a", agent: "A", goal: "g" });
   r.open({ id: "b", agent: "B", goal: "g" });
-  r.write("a", "m.ts", "export function f() {\n  const a = 10;\n  const b = 2;\n  return a + b;\n}\n");
-  r.write("b", "m.ts", "export function f() {\n  const a = 1;\n  const b = 20;\n  return a + b;\n}\n");
+  r.write("a", "m.ts", "export function f() {\n  const a = 10;\n  const mid = 0;\n  const b = 2;\n  return a + b + mid;\n}\n");
+  r.write("b", "m.ts", "export function f() {\n  const a = 1;\n  const mid = 0;\n  const b = 20;\n  return a + b + mid;\n}\n");
   r.submit("a");
   assert.equal(r.submit("b").status, "needs_verify");
   r.verify("b", "T", false, "sum is wrong");

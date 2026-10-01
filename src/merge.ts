@@ -20,45 +20,112 @@ export interface MergeResult {
 export const splitLines = (s: string): string[] => (s === "" ? [] : s.split("\n"));
 export const joinLines = (l: string[]): string => l.join("\n");
 
-/** Hunks that turn `base` into `other`, via LCS. */
+type EditOp = "M" | "D" | "I";
+
+/**
+ * Myers O(ND) shortest edit script (the algorithm behind git's diff), so alignments on repetitive
+ * code match git's instead of being an arbitrary tie-break. Returns null if the edit distance is too
+ * large to trace cheaply; the caller then falls back to one big replacement (never unsafe, only
+ * more conservative).
+ */
+function myers(a: string[], b: string[]): EditOp[] | null {
+  const n = a.length;
+  const m = b.length;
+  const max = n + m;
+  const off = max;
+  const width = 2 * max + 2;
+  const v = new Int32Array(width);
+  const trace: Int32Array[] = [];
+  let found = -1;
+  const budget = 24_000_000; // total Int32 entries we are willing to keep for the backtrace
+  outer: for (let d = 0; d <= max; d++) {
+    if ((d + 1) * width > budget) return null;
+    trace.push(v.slice());
+    for (let k = -d; k <= d; k += 2) {
+      let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) (x++, y++);
+      v[off + k] = x;
+      if (x >= n && y >= m) {
+        found = d;
+        break outer;
+      }
+    }
+  }
+  const ops: EditOp[] = [];
+  let x = n;
+  let y = m;
+  for (let d = found; d > 0; d--) {
+    const vv = trace[d];
+    const k = x - y;
+    const prevK = k === -d || (k !== d && vv[off + k - 1] < vv[off + k + 1]) ? k + 1 : k - 1;
+    const prevX = vv[off + prevK];
+    const prevY = prevX - prevK;
+    while (x > prevX && y > prevY) (ops.push("M"), x--, y--);
+    ops.push(x === prevX ? "I" : "D");
+    x = prevX;
+    y = prevY;
+  }
+  while (x > 0 && y > 0) (ops.push("M"), x--, y--);
+  return ops.reverse();
+}
+
+/** Hunks that turn `base` into `other`. */
 export function diffHunks(base: string[], other: string[]): Hunk[] {
   const n = base.length;
   const m = other.length;
-  // Trim common prefix/suffix to keep the LCS table small.
+  // Trim common prefix/suffix to keep the edit-distance search small.
   let pre = 0;
   while (pre < n && pre < m && base[pre] === other[pre]) pre++;
   let suf = 0;
   while (suf < n - pre && suf < m - pre && base[n - 1 - suf] === other[m - 1 - suf]) suf++;
   const a = base.slice(pre, n - suf);
   const b = other.slice(pre, m - suf);
-  const w = b.length + 1;
-  const t = new Uint32Array((a.length + 1) * w);
-  for (let i = a.length - 1; i >= 0; i--)
-    for (let j = b.length - 1; j >= 0; j--)
-      t[i * w + j] = a[i] === b[j] ? t[(i + 1) * w + j + 1] + 1 : Math.max(t[(i + 1) * w + j], t[i * w + j + 1]);
+  if (!a.length && !b.length) return [];
+  const ops = myers(a, b);
   const hunks: Hunk[] = [];
-  let i = 0;
-  let j = 0;
-  let cur: Hunk | null = null;
-  const flush = () => {
-    if (cur) hunks.push(cur);
-    cur = null;
-  };
-  const open = () => (cur ??= { start: pre + i, end: pre + i, lines: [] });
-  while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i] === b[j]) {
-      flush();
-      i++;
-      j++;
-    } else if (j < b.length && (i === a.length || t[i * w + j + 1] >= t[(i + 1) * w + j])) {
-      open().lines.push(b[j++]);
-    } else {
-      const h = open();
-      i++;
-      h.end = pre + i;
+  if (!ops) {
+    hunks.push({ start: pre, end: pre + a.length, lines: b });
+  } else {
+    let x = 0;
+    let y = 0;
+    let cur: Hunk | null = null;
+    const flush = () => {
+      if (cur) hunks.push(cur);
+      cur = null;
+    };
+    for (const op of ops) {
+      if (op === "M") {
+        flush();
+        x++;
+        y++;
+        continue;
+      }
+      cur ??= { start: pre + x, end: pre + x, lines: [] };
+      if (op === "D") cur.end = pre + ++x;
+      else cur.lines.push(b[y++]);
     }
+    flush();
   }
-  flush();
+  // Compaction: a pure insertion or deletion can often be placed at several equivalent positions (e.g.
+  // appending a function that ends like the one above it). Slide each as far down as it will go so
+  // that two sides describing the same change always agree on where it is; otherwise the same-point
+  // inserts that git reports as conflicts can look like independent edits here.
+  hunks.forEach((h, k) => {
+    const limit = hunks[k + 1]?.start ?? n;
+    if (h.end === h.start && h.lines.length) {
+      while (h.start < limit && base[h.start] === h.lines[0]) {
+        h.lines.push(h.lines.shift()!);
+        h.start++;
+        h.end++;
+      }
+    } else if (!h.lines.length && h.end > h.start) {
+      while (h.end < limit && base[h.start] === base[h.end]) {
+        h.start++;
+        h.end++;
+      }
+    }
+  });
   return hunks;
 }
 
@@ -101,7 +168,9 @@ export function merge3(base: string, ours: string, theirs: string): MergeResult 
     const gb: Hunk[] = [];
     for (let grew = true; grew; ) {
       grew = false;
-      const touches = (h: Hunk) => h.start < e || (h.start === e && (h.end === h.start || e === s));
+      // git's rule (xdl_merge): changes merge only if at least one unchanged line separates them, so
+      // abutting hunks conflict. Consecutive-line edits interact far more often than distant ones.
+      const touches = (h: Hunk) => h.start <= e;
       while (ia < ha.length && touches(ha[ia])) (ga.push(ha[ia]), (e = Math.max(e, ha[ia++].end)), (grew = true));
       while (ib < hb.length && touches(hb[ib])) (gb.push(hb[ib]), (e = Math.max(e, hb[ib++].end)), (grew = true));
     }
