@@ -10,6 +10,8 @@ import { Store } from "./store.ts";
 
 export interface Env {
   REPO: DurableObjectNamespace<RepoDO>;
+  /** static web UI (public/), served for every non-API path */
+  ASSETS: Fetcher;
   /** optional: large file contents are offloaded here */
   BLOBS?: R2Bucket;
   /** when set, every API call must carry a token; when unset the service runs in open dev mode */
@@ -337,6 +339,7 @@ export default {
         return json({ error: String((e as Error)?.message ?? e) }, 500);
       }
     }
-    return new Response(DASHBOARD, { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (url.pathname === "/legacy") return new Response(DASHBOARD, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return env.ASSETS.fetch(req);
   },
 };
