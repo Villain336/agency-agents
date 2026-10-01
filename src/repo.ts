@@ -121,6 +121,8 @@ export interface Session {
   evidence: Evidence[];
   previews: string[];
   verifyingSince?: number;
+  /** train mode: queued changes this one would conflict with; it is not built until they resolve */
+  blockedOn?: string[];
   /** what reviewers/verifiers told the author, so the reason is never only in the audit log */
   feedback?: { type: "rejected" | "verify_failed"; by: string; note: string; ts: number }[];
   reviewer?: string;
@@ -234,7 +236,7 @@ export interface State {
   secrets: { signingKey: string };
   auditHead: string;
   mirror: { lastRev: number };
-  seq: { event: number; comment: number; job: number; outbox: number; identity: number };
+  seq: { event: number; comment: number; job: number; outbox: number; identity: number; verifyStamp?: number };
   /** legacy mirror of config.reviewPaths, kept for older clients */
   reviewPaths: string[];
 }
@@ -529,14 +531,38 @@ export class Repo {
         conflicts.push({ path, kind, segments: [{ kind: "conflict", base: splitLines(base ?? ""), ours: splitLines(ours ?? ""), theirs: splitLines(theirs ?? "") }] });
       if (base === null) { whole("add-add"); continue; }
       if (ours === null || theirs === null) { whole("delete-modify"); continue; }
-      const r = merge3(base, ours, theirs);
+      const r = this.mergeMemo(base, ours, theirs);
       if (r.conflicts) conflicts.push({ path, kind: "text", segments: r.segments });
       else {
         changes[path] = r.text;
-        risks.push(...semanticRisk(path, base, ours, theirs));
+        risks.push(...r.risks.map((k) => ({ ...k, path })));
       }
     }
     return { changes, conflicts, merged, risks };
+  }
+
+  /** Queue evaluation re-merges the same inputs many times; results are pure, so cache them by content hash. */
+  private hashes = new Map<string, string>();
+  private hashOf(s: string): string {
+    let h = this.hashes.get(s);
+    if (h === undefined) {
+      h = sha256(s);
+      this.hashes.set(s, h);
+      if (this.hashes.size > 2000) this.hashes.delete(this.hashes.keys().next().value!);
+    }
+    return h;
+  }
+  private memo = new Map<string, ReturnType<typeof merge3> & { risks: Risk[] }>();
+  private mergeMemo(base: string, ours: string, theirs: string) {
+    const key = `${this.hashOf(base)}.${this.hashOf(ours)}.${this.hashOf(theirs)}`;
+    let hit = this.memo.get(key);
+    if (!hit) {
+      const m = merge3(base, ours, theirs);
+      hit = { ...m, risks: m.conflicts ? [] : semanticRisk("", base, ours, theirs) };
+      this.memo.set(key, hit);
+      if (this.memo.size > 400) this.memo.delete(this.memo.keys().next().value!);
+    }
+    return hit;
   }
 
   private editHash(s: Session) {
@@ -593,6 +619,19 @@ export class Repo {
     // 1. required checks, run by pull-based runners
     let checked = false;
     if (this.s.config.checks.length) {
+      if (this.policy().evidence === "train") {
+        // Don't spend a build on a change that is about to conflict with one queued ahead of it: park it
+        // until that one lands (then it gets a definite answer against the real trunk) or fails.
+        s.verifyingSince ??= this.stamp();
+        const blockers = this.blockedBy(s);
+        if (blockers.length) {
+          if (!s.blockedOn?.length) this.log("blocked", `${s.agent}'s change overlaps queued change(s) ${blockers.join(", ")}; waiting for them before spending a build`, s);
+          s.blockedOn = blockers;
+          s.status = "verifying";
+          return { status: "verifying", jobs: [], risk };
+        }
+        s.blockedOn = undefined;
+      }
       const st = this.ensureChecks(s, r.changes);
       if (st === "fail") {
         s.status = "active";
@@ -601,7 +640,7 @@ export class Repo {
         return { status: "active", evidence: failed, risk };
       }
       if (st === "pending") {
-        s.verifyingSince ??= this.now();
+        s.verifyingSince ??= this.stamp();
         if (s.status !== "verifying") this.log("verifying", `${s.agent}'s change is waiting on ${this.s.config.checks.length} check(s)`, s);
         s.status = "verifying";
         return { status: "verifying", jobs: Object.values(this.s.jobs).filter((j) => j.sessionId === id && (j.status === "queued" || j.status === "running")).map((j) => j.id), risk };
@@ -655,7 +694,13 @@ export class Repo {
     if (this.pumping) return;
     this.pumping = true;
     try {
-      const waiting = Object.values(this.s.sessions).filter((x) => x.status === "verifying").sort((a, b) => (a.verifyingSince ?? 0) - (b.verifyingSince ?? 0));
+      // Only sessions whose situation can have changed need another look: parked ones, and ones with no
+      // build outstanding (all passed, or stale). A session with a queued/running build is waiting on that
+      // build, whose completion re-evaluates it; re-merging it here would be O(queue^2) work per landing.
+      const busy = new Set(Object.values(this.s.jobs).filter((j) => j.status === "queued" || j.status === "running").map((j) => j.sessionId));
+      const waiting = Object.values(this.s.sessions)
+        .filter((x) => x.status === "verifying" && (x.blockedOn?.length || !busy.has(x.id) || this.hasStaleBuild(x)))
+        .sort((a, b) => (a.verifyingSince ?? 0) - (b.verifyingSince ?? 0));
       for (const w of waiting) if (w.status === "verifying") this.submit(w.id);
     } finally {
       this.pumping = false;
@@ -683,6 +728,40 @@ export class Repo {
     return later.some((c) => c.paths.some((p) => paths.has(p))) ? "stale" : "pass";
   }
 
+  /** True if a session's outstanding build was made obsolete (e.g. the change it was speculatively built on failed). */
+  private hasStaleBuild(s: Session): boolean {
+    if (this.policy().evidence !== "train") return false;
+    const eh = this.editHash(s);
+    return Object.values(this.s.jobs).some((j) => j.sessionId === s.id && j.editHash === eh && (j.status === "queued" || j.status === "running") && j.basis.some((id) => !["verifying", "in_review", "needs_verify", "landed"].includes(this.s.sessions[id]?.status ?? "")));
+  }
+
+  /** Strictly increasing queue-order stamp (wall-clock based, but never ties). */
+  private stamp(): number {
+    this.s.seq.verifyStamp = Math.max(this.now(), (this.s.seq.verifyStamp ?? 0) + 1);
+    return this.s.seq.verifyStamp;
+  }
+
+  /** Queued (verifying, unparked) changes ahead of `s` whose pending content would conflict with it. */
+  private blockedBy(s: Session): string[] {
+    const preds = Object.values(this.s.sessions)
+      .filter((x) => x.id !== s.id && x.status === "verifying" && !x.blockedOn?.length && (x.verifyingSince ?? 0) < (s.verifyingSince ?? 0))
+      .sort((a, b) => (a.verifyingSince ?? 0) - (b.verifyingSince ?? 0));
+    const overlay: Record<string, string | null> = {};
+    const included: Session[] = [];
+    for (const p of preds) {
+      const pr = this.mergeAll(p, overlay);
+      if (!pr.conflicts.length) {
+        Object.assign(overlay, pr.changes);
+        included.push(p);
+      }
+    }
+    if (!included.length) return [];
+    const mr = this.mergeAll(s, overlay);
+    if (!mr.conflicts.length) return [];
+    const bad = new Set(mr.conflicts.map((c) => c.path));
+    return included.filter((p) => Object.keys(p.edits).some((path) => bad.has(path))).map((p) => p.id);
+  }
+
   private ensureChecks(s: Session, changes: Record<string, string | null>): "pass" | "pending" | "fail" {
     const eh = this.editHash(s);
     let pending = false;
@@ -705,7 +784,7 @@ export class Repo {
     const basis: string[] = [];
     let mine = changes;
     if (this.policy().evidence === "train") {
-      s.verifyingSince ??= this.now();
+      s.verifyingSince ??= this.stamp();
       const preds = Object.values(this.s.sessions).filter((x) => x.id !== s.id && x.status === "verifying" && (x.verifyingSince ?? 0) < s.verifyingSince!).sort((a, b) => (a.verifyingSince ?? 0) - (b.verifyingSince ?? 0));
       for (const p of preds) {
         const pr = this.mergeAll(p, overlay);

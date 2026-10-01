@@ -384,3 +384,93 @@ test("failed verification notes are visible to the author too", () => {
   r.verify("b", "T", false, "sum is wrong");
   assert.equal(r.sessionRO("b").feedback!.at(-1)!.note, "sum is wrong");
 });
+
+// ---- early conflict detection in train mode -------------------------------
+const fnFile = "function a(x) {\n  return x;\n}\n";
+const append = (name: string) => fnFile + `\nfunction ${name}(x) {\n  return x;\n}\n`;
+
+test("train mode: a change that conflicts with one queued ahead of it is parked, not built", () => {
+  const r = mk({ "f.js": fnFile });
+  withChecks(r, "train");
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "f.js", append("fa"));
+  r.write("b", "f.js", append("fb"));
+  assert.equal(r.submit("a").status, "verifying");
+  const res = r.submit("b");
+  assert.equal(res.status, "verifying");
+  assert.deepEqual(r.session("b").blockedOn, ["a"]);
+  assert.equal(Object.values(r.s.jobs).filter((j) => j.sessionId === "b").length, 0, "no CI is spent on a change that is about to conflict");
+
+  // when the change ahead lands, the parked one is re-evaluated against the real trunk: a definite conflict, still no CI wasted
+  const j = r.claimJob("r")!;
+  r.jobResult(j.id, "r", { passed: true });
+  assert.equal(r.session("a").status, "landed");
+  assert.equal(r.session("b").status, "conflicted");
+  assert.equal(Object.values(r.s.jobs).filter((x) => x.sessionId === "b").length, 0);
+});
+
+test("train mode: if the change ahead fails, the parked change proceeds to its own build", () => {
+  const r = mk({ "f.js": fnFile });
+  withChecks(r, "train");
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "f.js", append("fa"));
+  r.write("b", "f.js", append("fb"));
+  r.submit("a");
+  r.submit("b");
+  const j = r.claimJob("r")!;
+  r.jobResult(j.id, "r", { passed: false });
+  assert.equal(r.session("a").status, "active");
+  assert.equal(r.session("b").blockedOn, undefined);
+  const jb = r.claimJob("r")!;
+  assert.equal(jb.sessionId, "b");
+  assert.deepEqual(jb.basis, []);
+  r.jobResult(jb.id, "r", { passed: true });
+  assert.equal(r.session("b").status, "landed");
+});
+
+test("train mode: independent changes are not parked and build in parallel", () => {
+  const r = mk({ "f.js": fnFile, "g.js": fnFile });
+  withChecks(r, "train");
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "f.js", append("fa"));
+  r.write("b", "g.js", append("gb"));
+  r.submit("a");
+  r.submit("b");
+  assert.equal(r.session("b").blockedOn, undefined);
+  assert.ok(r.claimJob("r1") && r.claimJob("r2"), "both jobs are runnable at once");
+});
+
+test("train mode: a change parked behind one that is abandoned is released", () => {
+  const r = mk({ "f.js": fnFile });
+  withChecks(r, "train");
+  r.open({ id: "a", agent: "alice", goal: "g" });
+  r.open({ id: "b", agent: "bruno", goal: "g" });
+  r.write("a", "f.js", append("fa"));
+  r.write("b", "f.js", append("fb"));
+  r.submit("a");
+  r.submit("b");
+  r.abandon("a");
+  assert.equal(r.session("b").blockedOn, undefined);
+  assert.equal(r.claimJob("r")!.sessionId, "b");
+});
+
+test("pump only re-evaluates queued sessions that can actually change state", () => {
+  const r = mk({ "f.js": fnFile, "g.js": fnFile, "h.js": fnFile });
+  withChecks(r, "train");
+  for (const [id, f] of [["a", "f.js"], ["b", "g.js"], ["c", "h.js"]] as const) {
+    r.open({ id, agent: id, goal: "g" });
+    r.write(id, f, append("n" + id));
+    r.submit(id);
+  }
+  let submits = 0;
+  const orig = (r as any).submit.bind(r);
+  (r as any).submit = (...a: unknown[]) => (submits++, orig(...a));
+  const ja = r.claimJob("r")!; // a's job passes -> a lands -> pump runs
+  r.jobResult(ja.id, "r", { passed: true });
+  // b and c still have running/queued jobs and nothing about them changed: they must not be re-submitted
+  assert.ok(submits <= 2, `expected a's own submit only, got ${submits} submits`);
+  assert.equal(r.session("b").status, "verifying");
+});
