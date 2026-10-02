@@ -143,3 +143,49 @@ export function applyOps(files: Map<string, string>, ops: Op[]): Record<string, 
   return out;
 }
 
+
+// ---- forge features: teams, code owners, workflows, runs, packages -------------------------------
+export const FORGE_TEAMS = [
+  { name: "core", members: ["maria", "security-reviewer"], description: "Maintainers of the auth and API surface" },
+  { name: "platform", members: ["maria", "ci-runner", "refactor-bot"], description: "Database client, CI and deploy tooling" },
+  { name: "docs", members: ["docs-agent"], description: "" },
+];
+
+export const FORGE_CONFIG = {
+  owners: [
+    { pattern: "src/auth/", owners: ["team:core"] },
+    { pattern: "src/db/", owners: ["team:platform", "claude-fixer"] },
+    { pattern: "public/", owners: ["team:core", "maria"] },
+  ],
+  workflows: [
+    { name: "deploy-preview", on: ["landed"], command: "npm run build && npx wrangler deploy --env preview", paths: ["src/", "public/"], secrets: ["DEPLOY_TOKEN"] },
+    { name: "release-publish", on: ["tag", "manual"], command: "npm publish --provenance", secrets: ["NPM_TOKEN"] },
+    { name: "nightly-audit", on: ["manual"], command: "npm audit --omit=dev && node scripts/license-check.js" },
+  ],
+};
+
+export interface RunSpec { id: string; workflow: string; trigger: "landed" | "tag" | "manual"; rev: number; ref?: string; by: string; status: "queued" | "running" | "passed" | "failed"; ageMin: number; durationMs?: number; output?: string; claimedBy?: string }
+export const FORGE_RUNS: RunSpec[] = [
+  { id: "w1", workflow: "deploy-preview", trigger: "landed", rev: 27, by: "claude-fixer", status: "passed", ageMin: 60 * 30, durationMs: 41200, claimedBy: "ci-runner", output: "> orbit@1.4.0 build\n> tsc -p .\n\nbuilt 42 files in 3.1s\n\nUploaded orbit-preview (2.31 sec)\nPublished orbit-preview (0.42 sec)\n  https://preview.orbit.example.test\n" },
+  { id: "w2", workflow: "nightly-audit", trigger: "manual", rev: 28, by: "maria", status: "passed", ageMin: 60 * 20, durationMs: 9800, claimedBy: "ci-runner", output: "found 0 vulnerabilities\nlicense-check: 118 packages, all MIT/ISC/Apache-2.0\n" },
+  { id: "w3", workflow: "deploy-preview", trigger: "landed", rev: 29, by: "refactor-bot", status: "failed", ageMin: 60 * 9, durationMs: 18300, claimedBy: "ci-runner", output: "> orbit@1.4.0 build\n> tsc -p .\n\nsrc/handlers/orders.ts(41,17): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.\n\nBuild failed with 1 error.\nnpm ERR! code 2\n" },
+  { id: "w4", workflow: "release-publish", trigger: "tag", rev: 30, ref: "v1.4.0", by: "maria", status: "passed", ageMin: 60 * 5, durationMs: 22500, claimedBy: "ci-runner", output: "npm notice package: @orbit/client@1.4.0\nnpm notice total files: 7\n+ @orbit/client@1.4.0\n" },
+  { id: "w5", workflow: "deploy-preview", trigger: "landed", rev: 30, by: "docs-agent", status: "running", ageMin: 2, claimedBy: "ci-runner" },
+  { id: "w6", workflow: "nightly-audit", trigger: "manual", rev: 30, by: "maria", status: "queued", ageMin: 1 },
+];
+
+const clientFiles = (v: string) => [
+  { name: "package.json", content: JSON.stringify({ name: "@orbit/client", version: v, type: "module", main: "index.js" }, null, 2) },
+  { name: "index.js", content: "export class OrbitClient {\n  constructor(base, token) { this.base = base; this.token = token; }\n  async orders(limit = 20) {\n    const r = await fetch(`${this.base}/orders?limit=${limit}`, { headers: { authorization: `Bearer ${this.token}` } });\n    if (!r.ok) throw new Error(`orbit: ${r.status}`);\n    return r.json();\n  }\n}\n".repeat(12) },
+  { name: "index.d.ts", content: "export declare class OrbitClient {\n  constructor(base: string, token: string);\n  orders(limit?: number): Promise<unknown[]>;\n}\n" },
+  { name: "README.md", content: "# @orbit/client\n\nTyped client for the Orbit orders API.\n" },
+  { name: "dist/internationalization-and-localization-formatting-helpers/bundle.min.js", content: "(()=>{})();".repeat(300) },
+];
+export const FORGE_PACKAGES: { name: string; version: string; description: string; publishedBy: string; ageD: number; yanked?: string; files: { name: string; content: string; scale?: number }[] }[] = [
+  { name: "@orbit/client", version: "1.0.0", description: "Typed client for the Orbit orders API", publishedBy: "maria", ageD: 40, files: clientFiles("1.0.0") },
+  { name: "@orbit/client", version: "1.1.0", description: "Typed client for the Orbit orders API", publishedBy: "maria", ageD: 21, yanked: "ships a debug logger that prints bearer tokens", files: clientFiles("1.1.0") },
+  { name: "@orbit/client", version: "1.2.0", description: "Typed client for the Orbit orders API", publishedBy: "claude-fixer", ageD: 9, files: clientFiles("1.2.0") },
+  { name: "@orbit/client", version: "1.3.0-rc.1", description: "Typed client for the Orbit orders API", publishedBy: "claude-fixer", ageD: 3, files: clientFiles("1.3.0-rc.1") },
+  { name: "orbit-cli", version: "0.4.2", description: "Command line for managing Orbit orders", publishedBy: "ci-runner", ageD: 6, files: [{ name: "orbit.sh", content: "#!/bin/sh\ncurl -fsS \"$ORBIT_URL/orders\"\n" }, { name: "package.json", content: "{\"name\":\"orbit-cli\",\"version\":\"0.4.2\"}" }] },
+  { name: "legacy-sdk", version: "0.1.0", description: "Deprecated first-generation SDK", publishedBy: "maria", ageD: 90, yanked: "superseded by @orbit/client", files: [{ name: "sdk.js", content: "module.exports = {};\n" }] },
+];

@@ -40,6 +40,33 @@ export function forgeRoute(c: Ctx): unknown {
     if (method === "GET") return repo.notificationsFor(me(c), { unread: url.searchParams.get("unread") === "1" });
     if (id === "read") return repo.markRead(me(c), { ids: body.ids, all: !!body.all });
   }
+  if (a === "runs" && method === "GET") return id ? repo.getRun(id) : repo.listRuns({ workflow: q("workflow"), status: q("status") as any });
+  if (a === "workflows" && method === "POST" && id && sub === "run") return repo.runWorkflow(id, me(c), body.rev);
+  if (a === "workflows" && method === "GET") return repo.config.workflows ?? [];
+  if (a === "secrets") {
+    if (method === "GET") return repo.listSecrets();
+    if (id && sub === "delete") return (repo.deleteSecret(id), { ok: true });
+    return (repo.setSecret(String(body.name ?? ""), String(body.value ?? ""), me(c)), { ok: true, name: body.name });
+  }
+  if (a === "packages") {
+    const name = id ? decodeURIComponent(id) : "";
+    if (method === "GET") {
+      if (!id) return repo.listPackages();
+      if (sub && sid === "files" && parts[4]) return repo.packageFile(name, decodeURIComponent(sub), decodeURIComponent(parts[4]));
+      if (sub) return repo.getPackageVersion(name, decodeURIComponent(sub));
+      const list = repo.listPackages().find((p) => p.name === name);
+      if (!list) throw new WeaveError(`no such package: ${name}`, 404);
+      return { ...list, releases: list.versions.map((v) => repo.getPackageVersion(name, v)) };
+    }
+    if (!id) return repo.publishPackage({ name: String(body.name ?? ""), version: String(body.version ?? ""), description: body.description, files: body.files ?? [] }, me(c));
+    if (sub && sid === "yank") return repo.yankPackageVersion(name, decodeURIComponent(sub), me(c), body.reason);
+  }
+  if (a === "teams") {
+    if (method === "GET") return id ? repo.getTeam(id) : repo.listTeams();
+    if (!id) return repo.createTeam(String(body.name ?? ""), body.members ?? [], me(c), body.description);
+    if (sub === "delete") return (repo.deleteTeam(id), { ok: true });
+    return repo.updateTeam(id, body);
+  }
   if (a === "tags") {
     if (method === "GET") return repo.listTags();
     return repo.createTag(String(body.name ?? ""), { rev: body.rev, message: body.message, tagger: me(c) });

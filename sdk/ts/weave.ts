@@ -75,6 +75,19 @@ export class Weave {
   tags = () => this.request("GET", "tags");
   release = (o: { tag: string; title?: string; notes?: string; prerelease?: boolean }) => this.request("POST", "releases", o);
   claimReview = (session: string, leaseSec?: number) => this.request("POST", `sessions/${session}/claim-review`, { leaseSec });
+  // teams, workflows, secrets, packages
+  teams = () => this.request("GET", "teams");
+  createTeam = (name: string, members: string[] = [], description = "") => this.request("POST", "teams", { name, members, description });
+  updateTeam = (name: string, p: { add?: string[]; remove?: string[] }) => this.request("POST", `teams/${name}`, p);
+  runs = (f: { workflow?: string; status?: string } = {}) => this.request("GET", "runs?" + new URLSearchParams(Object.entries(f).filter(([, v]) => v) as [string, string][]));
+  run = (id: string) => this.request("GET", `runs/${id}`);
+  runWorkflow = (name: string, rev?: number) => this.request("POST", `workflows/${encodeURIComponent(name)}/run`, { rev });
+  setSecret = (name: string, value: string) => this.request("POST", "secrets", { name, value });
+  secrets = () => this.request("GET", "secrets");
+  publishPackage = (o: { name: string; version: string; description?: string; files: { name: string; contentBase64: string }[] }) => this.request("POST", "packages", o);
+  packages = () => this.request("GET", "packages");
+  packageInfo = (name: string, version?: string) => this.request("GET", `packages/${encodeURIComponent(name)}` + (version ? `/${version}` : ""));
+  downloadPackageFile = async (name: string, version: string, file: string) => Buffer.from((await this.request("GET", `packages/${encodeURIComponent(name)}/${version}/files/${encodeURIComponent(file)}`)).contentBase64, "base64");
   history = (limit = 20) => this.request("GET", `commits?limit=${limit}`);
   provenance = (rev: number) => this.request("GET", `provenance/${rev}`);
 

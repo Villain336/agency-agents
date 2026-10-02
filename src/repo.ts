@@ -5,7 +5,7 @@
 // runners), a semantic-interaction gate, and risk-tiered review. Every landed commit carries a
 // signed, hash-chained provenance record.
 
-import { canonical, hmacSha256, randomToken, sha256 } from "./crypto.ts";
+import { canonical, hmacSha256, randomToken, sha256, sha256Bytes, toHex } from "./crypto.ts";
 import { diffStat, fileDiff, type FileDiff } from "./diff.ts";
 import { diffHunks, merge3, resolveSegments, splitLines, type MergeOptions, type Choice, type Segment } from "./merge.ts";
 import { DEFAULT_POLICY, scoreRisk, type Need, type Policy, type RiskReport } from "./review.ts";
@@ -78,6 +78,88 @@ export interface Config {
   merge: { lists: boolean; union: string[] };
   /** set on forks: where this repository's history was copied from */
   forkedFrom?: { repo: string; rev: number };
+  /** required reviewers by path (CODEOWNERS semantics: the last matching rule wins); owners are identity names or `team:<name>` */
+  owners?: OwnerRule[];
+  /** post-merge automation executed by runners */
+  workflows?: Workflow[];
+}
+
+export interface Workflow {
+  name: string;
+  /** landed: after each landing on trunk; tag: when a tag is created; manual: only via the API */
+  on: ("landed" | "tag" | "manual")[];
+  command: string;
+  timeoutMs?: number;
+  /** for `landed`: only when a changed path matches one of these CODEOWNERS-style patterns */
+  paths?: string[];
+  /** names of repository secrets delivered to this workflow's runs (never to check jobs) */
+  secrets?: string[];
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflow: string;
+  trigger: "landed" | "tag" | "manual";
+  rev: number;
+  ref?: string;
+  by: string;
+  command: string;
+  timeoutMs: number;
+  secrets: string[];
+  status: "queued" | "running" | "passed" | "failed";
+  createdAt: number;
+  claimedBy?: string;
+  leaseUntil?: number;
+  output?: string;
+  durationMs?: number;
+  finishedAt?: number;
+}
+
+export interface PackageFile {
+  name: string;
+  size: number;
+  sha256: string;
+  contentBase64?: string;
+}
+export interface PackageVersion {
+  name: string;
+  version: string;
+  description: string;
+  files: PackageFile[];
+  publishedBy: string;
+  publishedAt: number;
+  yanked?: string;
+}
+const PKG_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]{0,99}$/;
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+export const PKG_MAX_BYTES = 1_000_000;
+function semverCmp(a: string, b: string): number {
+  const x = SEMVER.exec(a)!, y = SEMVER.exec(b)!;
+  for (let i = 1; i <= 3; i++) if (+x[i] !== +y[i]) return +x[i] - +y[i];
+  if (!x[4] || !y[4]) return x[4] ? -1 : y[4] ? 1 : 0;
+  const pa = x[4].split("."), pb = y[4].split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if (pa[i] === undefined) return -1;
+    if (pb[i] === undefined) return 1;
+    const na = /^\d+$/.test(pa[i]), nb = /^\d+$/.test(pb[i]);
+    if (na && nb && +pa[i] !== +pb[i]) return +pa[i] - +pb[i];
+    if (na !== nb) return na ? -1 : 1;
+    if (!na && pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+export interface OwnerRule {
+  pattern: string;
+  owners: string[];
+}
+
+export interface Team {
+  name: string;
+  members: string[];
+  description: string;
+  createdBy: string;
+  createdAt: number;
 }
 
 export interface Conflict {
@@ -266,7 +348,7 @@ export interface Task {
   closedAt?: number;
 }
 
-export type NotificationType = "mention" | "task_assigned" | "task_commented" | "review_requested" | "change_landed" | "change_conflicted" | "change_commented";
+export type NotificationType = "mention" | "task_assigned" | "task_commented" | "review_requested" | "change_landed" | "change_conflicted" | "change_commented" | "workflow_failed";
 
 export interface Notification {
   id: string;
@@ -301,6 +383,9 @@ export const CONFIG_FILE = "weave.json";
 export interface State {
   rev: number;
   tasks: Record<string, Task>;
+  teams: Record<string, Team>;
+  runs: Record<string, WorkflowRun>;
+  packages: Record<string, PackageVersion>;
   notifications: Notification[];
   tags: Record<string, Tag>;
   releases: Record<string, Release>;
@@ -314,10 +399,10 @@ export interface State {
   jobs: Record<string, Job>;
   outbox: OutboxItem[];
   config: Config;
-  secrets: { signingKey: string };
+  secrets: { signingKey: string; /** repository secrets for workflow runs */ env?: Record<string, string> };
   auditHead: string;
   mirror: { lastRev: number };
-  seq: { event: number; comment: number; job: number; outbox: number; identity: number; task: number; notification: number; verifyStamp?: number };
+  seq: { event: number; comment: number; job: number; outbox: number; identity: number; task: number; notification: number; run?: number; verifyStamp?: number };
   /** legacy mirror of config.reviewPaths, kept for older clients */
   reviewPaths: string[];
 }
@@ -333,7 +418,7 @@ export class WeaveError extends Error {
 export const defaultConfig = (): Config => ({ reviewPaths: [], shards: {}, shard: "main", checks: [], policy: {}, webhooks: [], merge: { lists: true, union: [] } });
 
 export const emptyState = (): State => ({
-  rev: 0, tasks: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
+  rev: 0, tasks: {}, teams: {}, runs: {}, packages: {}, notifications: [], tags: {}, releases: {}, files: {}, commits: [], sessions: {}, events: [], identities: {}, comments: {}, jobs: {}, outbox: [],
   config: defaultConfig(), secrets: { signingKey: randomToken("sk", 32) }, auditHead: "", mirror: { lastRev: 0 },
   seq: { event: 0, comment: 0, job: 0, outbox: 0, identity: 0, task: 0, notification: 0 }, reviewPaths: [],
 });
@@ -370,6 +455,39 @@ const significant = (l: string) => l.trim().length > 3;
 export function globMatch(path: string, pattern: string): boolean {
   const re = new RegExp("^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, ".*") + "$");
   return re.test(pattern.includes("/") ? path : path.slice(path.lastIndexOf("/") + 1));
+}
+
+/** CODEOWNERS-style glob: `*` within a segment, `**` across segments, leading `/` anchors, trailing `/` or a bare name matches a directory subtree. */
+export function matchOwnerPattern(pattern: string, path: string): boolean {
+  let p = pattern.trim();
+  if (!p) return false;
+  const anchored = p.startsWith("/") || p.slice(0, -1).includes("/");
+  p = p.replace(/^\//, "");
+  const dir = p.endsWith("/");
+  if (dir) p = p.slice(0, -1);
+  let re = "";
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i];
+    if (ch === "*" && p[i + 1] === "*") {
+      re += ".*";
+      i++;
+      if (p[i + 1] === "/") i++;
+    } else if (ch === "*") re += "[^/]*";
+    else if (ch === "?") re += "[^/]";
+    else re += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${anchored ? "" : "(?:.*/)?"}${re}(?:/.*)?$`).test(path) && (dir ? path !== p && new RegExp(`^${anchored ? "" : "(?:.*/)?"}${re}/`).test(path) : true);
+}
+
+export function parseCodeowners(text: string): OwnerRule[] {
+  const out: OwnerRule[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s#.*$/, "").trim();
+    if (!line || line.startsWith("#")) continue;
+    const [pattern, ...owners] = line.split(/\s+/);
+    out.push({ pattern, owners: owners.map((o) => o.replace(/^@/, "")) });
+  }
+  return out;
 }
 
 export class Repo {
@@ -443,6 +561,8 @@ export class Repo {
     if (patch.policy) c.policy = patch.policy;
     if (patch.merge) c.merge = { lists: patch.merge.lists !== false, union: patch.merge.union ?? [] };
     if (patch.mirror !== undefined) c.mirror = patch.mirror;
+    if (patch.workflows) c.workflows = patch.workflows.map((w) => ({ name: w.name, on: w.on, command: w.command, timeoutMs: w.timeoutMs, paths: w.paths, secrets: w.secrets }));
+    if (patch.owners) c.owners = patch.owners.map((o) => ({ pattern: String(o.pattern), owners: o.owners.map(String) }));
     if (patch.webhooks)
       c.webhooks = patch.webhooks.map((w, i) => ({ id: w.id ?? `wh${i + 1}`, url: w.url, secret: w.secret ?? "", events: w.events?.length ? w.events : ["*"] }));
     this.log("config", "repository configuration updated");
@@ -751,8 +871,8 @@ export class Repo {
       paths: Object.keys(r.changes), before: (p) => this.head(p), after: r.changes, semantic: r.risks, merged: r.merged,
       protectedPaths: this.s.config.reviewPaths, recentRejects: mine.filter((x) => x.status === "rejected").length, policy: this.policy(),
     });
-    if (r.changes[CONFIG_FILE] !== undefined && risk.need !== "human")
-      return { ...risk, score: Math.max(risk.score, this.policy().humanAbove), tier: "high", need: "human", reasons: [...risk.reasons, `+config: ${CONFIG_FILE} changes checks, policy and review rules, so a human approves it`] };
+    if ((r.changes[CONFIG_FILE] !== undefined || r.changes["CODEOWNERS"] !== undefined || r.changes[".github/CODEOWNERS"] !== undefined) && risk.need !== "human")
+      return { ...risk, score: Math.max(risk.score, this.policy().humanAbove), tier: "high", need: "human", reasons: [...risk.reasons, `+config: ${CONFIG_FILE} / CODEOWNERS change checks, policy and review rules, so a human approves it`] };
     return risk;
   }
 
@@ -850,9 +970,11 @@ export class Repo {
       return { status: "needs_verify", risks: r.risks, risk };
     }
     // 3. risk-tiered review
-    if (risk.need !== "none" && !this.approved(s, risk.need)) {
+    const owners = this.requiredOwners(s, Object.keys(r.changes));
+    const ownersMissing = owners.filter((o) => !o.satisfied);
+    if ((risk.need !== "none" && !this.approved(s, risk.need)) || ownersMissing.length) {
       if (s.status !== "in_review") this.log("review_requested", `${s.agent}'s ${risk.tier}-risk change (${risk.score}) needs ${risk.need === "human" ? "a human" : "a"} reviewer: ${risk.reasons.slice(0, 3).join("; ")}`, s);
-      if (s.status !== "in_review") this.notifyReviewers(s, risk.need);
+      if (s.status !== "in_review") this.notifyReviewers(s, risk.need, ownersMissing.flatMap((o) => o.owners));
       s.status = "in_review";
       return { status: "in_review", risk };
     }
@@ -888,6 +1010,7 @@ export class Repo {
     }
     if (wasWaiting) this.notify(s.agent, "change_landed", `your change landed as r${s.landedRev}: ${msg}`, { kind: "session", id: s.id });
     if (changes[CONFIG_FILE]) this.applyConfigFile(changes[CONFIG_FILE]!);
+    this.fireWorkflows("landed", s.landedRev, s.agent, Object.keys(changes));
     this.log("landed", `${s.agent} landed r${s.landedRev}${merged ? " (auto-merged with concurrent work)" : ""}: ${msg}`, s);
     this.pump();
     return { status: "landed" as Status, rev: s.landedRev, risk };
@@ -1039,13 +1162,14 @@ export class Repo {
   }
 
   /** A runner pulls the next job. Expired leases are requeued first. */
-  claimJob(runner: string, leaseMs = 300_000): (Job & { files: Record<string, string> }) | null {
+  claimJob(runner: string, leaseMs = 300_000): (Partial<Job> & { id: string; check: string; command: string; timeoutMs: number; files: Record<string, string>; env?: Record<string, string> }) | null {
     const t = this.now();
     for (const j of Object.values(this.s.jobs)) if (j.status === "running" && (j.leaseUntil ?? 0) < t) j.status = "queued";
+    for (const w of Object.values(this.s.runs)) if (w.status === "running" && (w.leaseUntil ?? 0) < t) (w.status = "queued"), (w.claimedBy = undefined);
     const next = Object.values(this.s.jobs)
       .filter((j) => j.status === "queued" && this.s.sessions[j.sessionId]?.status === "verifying")
       .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))[0];
-    if (!next) return null;
+    if (!next) return this.claimRun(runner, leaseMs);
     next.status = "running";
     next.claimedBy = runner;
     next.leaseUntil = t + leaseMs;
@@ -1053,8 +1177,133 @@ export class Repo {
     for (const [p, c] of Object.entries(next.overlay)) c === null ? delete files[p] : (files[p] = c);
     return { ...next, files };
   }
+  private claimRun(runner: string, leaseMs: number) {
+    const w = Object.values(this.s.runs).filter((x) => x.status === "queued").sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))[0];
+    if (!w) return null;
+    w.status = "running";
+    w.claimedBy = runner;
+    w.leaseUntil = this.now() + leaseMs;
+    const env: Record<string, string> = {};
+    for (const n of w.secrets) if (this.s.secrets.env?.[n] !== undefined) env[n] = this.s.secrets.env[n];
+    return { id: w.id, check: w.workflow, command: w.command, timeoutMs: w.timeoutMs, rev: w.rev, files: this.filesAt(w.rev), env: w.secrets.length ? env : undefined };
+  }
 
+  // ---- packages (a small generic registry; versions are immutable) -----------------
+  publishPackage(o: { name: string; version: string; description?: string; files: { name: string; contentBase64: string }[] }, by: string): PackageVersion {
+    if (!PKG_NAME.test(o.name ?? "")) throw new WeaveError("invalid package name: lowercase letters, digits, '.', '_', '-', optional @scope/");
+    if (!SEMVER.test(o.version ?? "")) throw new WeaveError("version must be semver, e.g. 1.2.3 or 1.2.3-beta.1");
+    if (!Array.isArray(o.files) || !o.files.length) throw new WeaveError("a package needs at least one file");
+    const key = `${o.name}@${o.version}`;
+    if (this.s.packages[key]) throw new WeaveError(`${key} already exists (published versions are immutable)`, 409);
+    let total = 0;
+    const files = o.files.map((f) => {
+      if (!/^[\w.@+-][\w.@+-]{0,199}$/.test(f.name ?? "") || f.name.includes("..")) throw new WeaveError(`invalid file name: ${f.name}`);
+      if (typeof f.contentBase64 !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(f.contentBase64) || f.contentBase64.length % 4) throw new WeaveError(`${f.name}: content must be base64`);
+      const size = Math.floor((f.contentBase64.length * 3) / 4) - (f.contentBase64.endsWith("==") ? 2 : f.contentBase64.endsWith("=") ? 1 : 0);
+      total += size;
+      if (total > PKG_MAX_BYTES) throw new WeaveError(`package too large: ${PKG_MAX_BYTES} bytes max per version`, 413);
+      const bytes = Uint8Array.from(atob(f.contentBase64), (c) => c.charCodeAt(0));
+      return { name: f.name, size, sha256: toHex(sha256Bytes(bytes)), contentBase64: f.contentBase64 };
+    });
+    if (new Set(files.map((f) => f.name)).size !== files.length) throw new WeaveError("duplicate file names");
+    const pv: PackageVersion = { name: o.name, version: o.version, description: o.description ?? "", files, publishedBy: by, publishedAt: this.now() };
+    this.s.packages[key] = pv;
+    this.log("package", `${by} published ${key}`, undefined, by);
+    return this.stripBytes(pv);
+  }
+  private stripBytes(pv: PackageVersion): PackageVersion {
+    return { ...pv, files: pv.files.map(({ contentBase64: _c, ...f }) => f) };
+  }
+  private versionsOf(name: string): PackageVersion[] {
+    return Object.values(this.s.packages).filter((p) => p.name === name).sort((a, b) => semverCmp(b.version, a.version));
+  }
+  listPackages(): { name: string; latest: string | undefined; versions: string[]; description: string; updatedAt: number }[] {
+    const names = [...new Set(Object.values(this.s.packages).map((p) => p.name))].sort();
+    return names.map((name) => {
+      const vs = this.versionsOf(name);
+      const live = vs.filter((v) => !v.yanked);
+      const latest = (live.find((v) => !SEMVER.exec(v.version)![4]) ?? live[0])?.version;
+      return { name, latest, versions: vs.map((v) => v.version), description: vs.find((v) => v.description)?.description ?? "", updatedAt: Math.max(...vs.map((v) => v.publishedAt)) };
+    });
+  }
+  getPackageVersion(name: string, version: string): PackageVersion {
+    const pv = this.s.packages[`${name}@${version}`];
+    if (!pv) throw new WeaveError(`no such version: ${name}@${version}`, 404);
+    return this.stripBytes(pv);
+  }
+  packageFile(name: string, version: string, file: string): { name: string; size: number; sha256: string; contentBase64: string } {
+    const pv = this.s.packages[`${name}@${version}`];
+    if (!pv) throw new WeaveError(`no such version: ${name}@${version}`, 404);
+    const f = pv.files.find((x) => x.name === file);
+    if (!f) throw new WeaveError(`no such file: ${file}`, 404);
+    return { name: f.name, size: f.size, sha256: f.sha256, contentBase64: f.contentBase64! };
+  }
+  yankPackageVersion(name: string, version: string, by: string, reason = "yanked") {
+    const pv = this.s.packages[`${name}@${version}`];
+    if (!pv) throw new WeaveError(`no such version: ${name}@${version}`, 404);
+    pv.yanked = reason;
+    this.log("package", `${by} yanked ${name}@${version}: ${reason}`, undefined, by);
+    return this.stripBytes(pv);
+  }
+
+  // ---- workflows (post-merge automation) ----------------------------------------
+  listRuns(f: { workflow?: string; status?: WorkflowRun["status"] } = {}): WorkflowRun[] {
+    return Object.values(this.s.runs).filter((r) => (!f.workflow || r.workflow === f.workflow) && (!f.status || r.status === f.status)).sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)));
+  }
+  getRun(id: string): WorkflowRun {
+    const r = this.s.runs[id];
+    if (!r) throw new WeaveError(`no such run: ${id}`, 404);
+    return r;
+  }
+  private queueRun(w: Workflow, trigger: WorkflowRun["trigger"], rev: number, by: string, ref?: string): WorkflowRun {
+    const n = (this.s.seq.run = (this.s.seq.run ?? 0) + 1);
+    const run: WorkflowRun = { id: `w${n}`, workflow: w.name, trigger, rev, ref, by, command: w.command, timeoutMs: w.timeoutMs ?? 600_000, secrets: w.secrets ?? [], status: "queued", createdAt: this.now() };
+    this.s.runs[run.id] = run;
+    const all = Object.values(this.s.runs);
+    if (all.length > 200) for (const old of all.filter((x) => x.status === "passed" || x.status === "failed").sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))).slice(0, all.length - 200)) delete this.s.runs[old.id];
+    this.log("workflow_queued", `workflow ${w.name} queued for r${rev} (${trigger})`, undefined, by);
+    return run;
+  }
+  private fireWorkflows(trigger: "landed" | "tag", rev: number, by: string, paths: string[] = [], ref?: string) {
+    for (const w of this.s.config.workflows ?? []) {
+      if (!w.on.includes(trigger)) continue;
+      if (trigger === "landed" && w.paths?.length && !paths.some((p) => w.paths!.some((g) => matchOwnerPattern(g, p)))) continue;
+      this.queueRun(w, trigger, rev, by, ref);
+    }
+  }
+  runWorkflow(name: string, by: string, rev?: number): WorkflowRun {
+    const w = (this.s.config.workflows ?? []).find((x) => x.name === name);
+    if (!w) throw new WeaveError(`no such workflow: ${name}`, 404);
+    if (!w.on.includes("manual")) throw new WeaveError(`workflow ${name} is not triggered manually`, 409);
+    return this.queueRun(w, "manual", rev ?? this.s.rev, by);
+  }
+
+  // ---- repository secrets (names are listable, values never leave the server except into workflow runs) ----
+  setSecret(name: string, value: string, by: string) {
+    if (!/^[A-Z_][A-Z0-9_]{0,63}$/.test(name)) throw new WeaveError("invalid secret name: use UPPER_SNAKE_CASE");
+    (this.s.secrets.env ??= {})[name] = String(value);
+    this.log("secret", `${by} set secret ${name}`, undefined, by);
+  }
+  deleteSecret(name: string) {
+    if (this.s.secrets.env) delete this.s.secrets.env[name];
+  }
+  listSecrets(): { name: string }[] {
+    return Object.keys(this.s.secrets.env ?? {}).sort().map((name) => ({ name }));
+  }
   jobResult(id: string, runner: string, r: { passed: boolean; output?: string; durationMs?: number; previewUrl?: string }) {
+    const run = this.s.runs[id];
+    if (run) {
+      if (run.status !== "running") throw new WeaveError(`run ${id} is ${run.status}`, 409);
+      if (run.claimedBy && run.claimedBy !== runner) throw new WeaveError(`run ${id} is leased to another runner`, 403);
+      run.status = r.passed ? "passed" : "failed";
+      run.output = clip(r.output ?? "");
+      run.durationMs = r.durationMs;
+      run.finishedAt = this.now();
+      this.log(r.passed ? "workflow_passed" : "workflow_failed", `${runner} ran workflow ${run.workflow} on r${run.rev}: ${r.passed ? "passed" : "FAILED"}`, undefined, runner);
+      const author = this.s.commits.find((c) => c.rev === run.rev)?.agent;
+      if (!r.passed && author && author !== "system") this.notify(author, "workflow_failed", `workflow ${run.workflow} failed on r${run.rev}`, { kind: "session", id: this.s.commits.find((c) => c.rev === run.rev)?.sessionId ?? "" });
+      return { job: run as any, session: "n/a" };
+    }
     const j = this.s.jobs[id];
     if (!j) throw new WeaveError(`no such job: ${id}`, 404);
     if (j.status !== "running") throw new WeaveError(`job ${id} is ${j.status}`, 409);
@@ -1249,6 +1498,8 @@ export class Repo {
     if (this.s.config.checks.length && !evidence.some((e) => e.current && e.passed)) warnings.push(evidence.length ? "Check evidence is not current for these edits (stale or from earlier code); a pass on other code proves little." : "No check evidence yet.");
     for (const v of this.revertsOf(s, r.changes)) warnings.push(`Would remove ${v.lines} lines that ${v.agent} landed in r${v.rev} (${v.path}).`);
     for (const k of r.risks) warnings.push(`Interacts with concurrent work: ${k.detail}`);
+    const requiredOwners = this.requiredOwners(s, Object.keys(r.changes));
+    for (const o of requiredOwners.filter((x) => !x.satisfied)) warnings.push(`Needs approval from a code owner of ${o.pattern}: ${o.owners.join(", ")}.`);
     return {
       warnings, behindBy,
       id: s.id, agent: s.agent, goal: s.goal, status: s.status, model: s.model, baseRev: s.baseRev, headRev: this.s.rev,
@@ -1256,7 +1507,7 @@ export class Repo {
       evidence,
       previews: s.previews,
       stats: { files: files.length, added: files.reduce((n, f) => n + f.added, 0), removed: files.reduce((n, f) => n + f.removed, 0) },
-      files, comments: this.comments(id),
+      files, comments: this.comments(id), requiredOwners,
     };
   }
 
@@ -1473,9 +1724,11 @@ export class Repo {
     for (const x of this.s.notifications) if (x.to === to && !x.read && (f.all || f.ids?.includes(x.id))) (x.read = true), n++;
     return { marked: n };
   }
-  private notifyReviewers(s: Session, need: Need) {
+  private notifyReviewers(s: Session, need: Need, owners: string[] = []) {
+    for (const o of this.expandOwners(owners)) this.notify(o, "review_requested", `${s.agent}'s change needs your review as a code owner: ${s.goal}`, { kind: "session", id: s.id }, s.agent);
     for (const i of Object.values(this.s.identities)) {
       if (i.disabled || i.name === s.agent) continue;
+      if (owners.length) continue; // owners were asked; don't page everyone
       if (i.kind === "human" || (i.kind === "reviewer" && need !== "human")) this.notify(i.name, "review_requested", `${s.agent}'s change needs review: ${s.goal}`, { kind: "session", id: s.id }, s.agent);
     }
   }
@@ -1489,6 +1742,7 @@ export class Repo {
     const t: Tag = { name, rev, message: o.message ?? "", tagger: o.tagger, ts: this.now() };
     this.s.tags[name] = t;
     this.log("tag", `${o.tagger} tagged ${name} at r${rev}`, undefined, o.tagger);
+    this.fireWorkflows("tag", rev, o.tagger, [], name);
     return t;
   }
   listTags(): Tag[] {
@@ -1561,7 +1815,70 @@ export class Repo {
       if (!j.merge || typeof j.merge !== "object" || (j.merge.union !== undefined && !strs(j.merge.union))) return { error: "weave.json: merge must be {lists?, union?: string[]}" };
       patch.merge = { lists: j.merge.lists !== false, union: j.merge.union ?? [] };
     }
+    if (j.workflows !== undefined) {
+      const ok = (w: any) => w && /^[\w.-]{1,40}$/.test(w.name ?? "") && typeof w.command === "string" && w.command.trim() && Array.isArray(w.on) && w.on.length && w.on.every((x: unknown) => ["landed", "tag", "manual"].includes(x as string)) && (w.paths === undefined || strs(w.paths)) && (w.secrets === undefined || strs(w.secrets)) && (w.timeoutMs === undefined || typeof w.timeoutMs === "number");
+      if (!Array.isArray(j.workflows) || !j.workflows.every(ok)) return { error: "weave.json: workflows must be a list of {name, on: [landed|tag|manual], command, paths?, secrets?, timeoutMs?}" };
+      patch.workflows = j.workflows;
+    }
+    if (j.owners !== undefined) {
+      if (!Array.isArray(j.owners) || !j.owners.every((o: any) => o && typeof o.pattern === "string" && strs(o.owners))) return { error: "weave.json: owners must be a list of {pattern, owners: string[]}" };
+      patch.owners = j.owners;
+    }
     return { patch };
+  }
+
+  // ---- teams and code owners -----------------------------------------------
+  createTeam(name: string, members: string[], by: string, description = ""): Team {
+    if (!/^[A-Za-z0-9][\w.-]{0,38}$/.test(name)) throw new WeaveError("invalid team name: letters, digits, '.', '_', '-'");
+    if (this.s.teams[name]) throw new WeaveError(`team ${name} already exists`, 409);
+    const t: Team = { name, members: [...new Set(members)], description, createdBy: by, createdAt: this.now() };
+    this.s.teams[name] = t;
+    this.log("team", `${by} created team ${name}`, undefined, by);
+    return t;
+  }
+  getTeam(name: string): Team {
+    const t = this.s.teams[name];
+    if (!t) throw new WeaveError(`no such team: ${name}`, 404);
+    return t;
+  }
+  listTeams(): Team[] {
+    return Object.values(this.s.teams).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  updateTeam(name: string, p: { add?: string[]; remove?: string[]; description?: string }): Team {
+    const t = this.getTeam(name);
+    t.members = [...new Set([...t.members, ...(p.add ?? [])])].filter((m) => !p.remove?.includes(m));
+    if (p.description !== undefined) t.description = p.description;
+    return t;
+  }
+  deleteTeam(name: string) {
+    this.getTeam(name);
+    delete this.s.teams[name];
+  }
+  private expandOwners(owners: string[]): Set<string> {
+    const out = new Set<string>();
+    for (const o of owners) {
+      if (o.startsWith("team:")) for (const m of this.s.teams[o.slice(5)]?.members ?? []) out.add(m);
+      else out.add(o);
+    }
+    return out;
+  }
+  /** Rules from a CODEOWNERS file in the repo, then the configured ones (so configuration wins). */
+  ownerRules(): OwnerRule[] {
+    const file = this.head("CODEOWNERS") ?? this.head(".github/CODEOWNERS");
+    return [...(file ? parseCodeowners(file) : []), ...(this.s.config.owners ?? [])];
+  }
+  /** For each rule that governs one of `paths` (last match wins per path): who may satisfy it, and whether someone has. */
+  requiredOwners(s: Session, paths: string[]): { pattern: string; owners: string[]; satisfied: boolean }[] {
+    const rules = this.ownerRules();
+    const hit = new Map<string, OwnerRule>();
+    for (const p of paths) {
+      for (let i = rules.length - 1; i >= 0; i--) if (matchOwnerPattern(rules[i].pattern, p)) {
+        if (rules[i].owners.length) hit.set(rules[i].pattern + "\0" + rules[i].owners.join(","), rules[i]);
+        break;
+      }
+    }
+    const approvers = new Set(s.approvals.filter((a) => a.by !== s.agent).map((a) => a.by));
+    return [...hit.values()].map((r) => ({ pattern: r.pattern, owners: r.owners, satisfied: [...this.expandOwners(r.owners)].some((o) => approvers.has(o) && o !== s.agent) }));
   }
 
   // ---- provenance -----------------------------------------------------

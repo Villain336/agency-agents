@@ -3,6 +3,8 @@ import { ApiError, post } from "../api.js";
 import { emptyState, errorBox, pageHeader, timeEl } from "../components.js";
 import { add, clear, copyText, field, h, icon, openDialog, toast } from "../dom.js";
 
+import { ownersCard, secretsCard, teamsCard } from "./settings-extra.js";
+
 const KINDS = ["agent", "human", "reviewer", "verifier", "runner", "admin"];
 
 export async function render(ctx) {
@@ -12,9 +14,12 @@ export async function render(ctx) {
   const cfgHost = h("section", { class: "card" });
   const hookHost = h("section", { class: "card" });
   const idHost = h("section", { class: "card" });
+  const teamHost = h("section", { class: "card" });
+  const ownHost = h("section", { class: "card" });
+  const secHost = h("section", { class: "card" });
   let hooks = [];
-  root.append(cfgHost, hookHost, idHost);
-  await Promise.all([loadConfig(), loadIdentities()]);
+  root.append(cfgHost, ownHost, teamHost, secHost, hookHost, idHost);
+  await Promise.all([loadConfig(), loadIdentities(), ownersCard(ownHost, ctx), teamsCard(teamHost, ctx), secretsCard(secHost, ctx)]);
 
   async function loadConfig() {
     clear(cfgHost);

@@ -105,3 +105,47 @@ test("forge routes: tasks, next, claims, notifications, tags, releases", () => {
   assert.equal(call(repo, "GET", "tags").length, 1);
   assert.deepEqual(requiredScopes("POST", ["sessions", "s1", "claim-review"]), ["review"]);
 });
+
+test("teams routes and CODEOWNERS via config", () => {
+  const repo = new Repo();
+  repo.seed({ "a.ts": "1" });
+  call(repo, "POST", "teams", { agent: "root", name: "core", members: ["ann"] });
+  assert.equal(call(repo, "GET", "teams/core").members[0], "ann");
+  call(repo, "POST", "teams/core", { add: ["bo"] });
+  assert.equal(call(repo, "GET", "teams").length, 1);
+  assert.deepEqual(requiredScopes("POST", ["teams"]), ["admin"]);
+  call(repo, "POST", "config", { owners: [{ pattern: "a.ts", owners: ["team:core"] }] });
+  call(repo, "POST", "sessions", { agent: "bot", goal: "g", id: "s" });
+  call(repo, "POST", "sessions/s/file", { path: "a.ts", content: "2" });
+  assert.equal(call(repo, "POST", "sessions/s/submit", {}).status, "in_review");
+  assert.equal(call(repo, "POST", "sessions/s/review", { reviewer: "bo", approve: true, kind: "reviewer" }).status, "landed");
+});
+
+test("workflow, run and secret routes", () => {
+  const repo = new Repo();
+  repo.seed({ "a.ts": "1" });
+  call(repo, "POST", "config", { workflows: [{ name: "deploy", on: ["manual"], command: "make deploy", secrets: ["TOK"] }] });
+  call(repo, "POST", "secrets", { name: "TOK", value: "v" });
+  assert.deepEqual(call(repo, "GET", "secrets"), [{ name: "TOK" }]);
+  const run = call(repo, "POST", "workflows/deploy/run", { agent: "alice" });
+  assert.equal(call(repo, "GET", "runs/" + run.id).status, "queued");
+  assert.equal(call(repo, "GET", "runs").length, 1);
+  const claim = call(repo, "POST", "runner/claim", { runner: "r1" });
+  assert.deepEqual(claim.job.env, { TOK: "v" });
+  call(repo, "POST", `runner/jobs/${run.id}/result`, { runner: "r1", passed: true });
+  assert.equal(call(repo, "GET", "runs/" + run.id).status, "passed");
+  assert.deepEqual(requiredScopes("GET", ["secrets"]), ["admin"]);
+});
+
+test("package routes: publish, list, get version, download file, yank", () => {
+  const repo = new Repo();
+  const content = Buffer.from("hello").toString("base64");
+  call(repo, "POST", "packages", { agent: "ci", name: "@acme/lib", version: "1.0.0", files: [{ name: "lib.txt", contentBase64: content }] });
+  assert.equal(call(repo, "GET", "packages")[0].latest, "1.0.0");
+  const name = encodeURIComponent("@acme/lib");
+  assert.equal(call(repo, "GET", `packages/${name}`).releases.length, 1);
+  assert.equal(call(repo, "GET", `packages/${name}/1.0.0`).files[0].size, 5);
+  assert.equal(call(repo, "GET", `packages/${name}/1.0.0/files/lib.txt`).contentBase64, content);
+  call(repo, "POST", `packages/${name}/1.0.0/yank`, { reason: "bad" });
+  assert.equal(call(repo, "GET", "packages")[0].latest, undefined);
+});

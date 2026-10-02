@@ -4,8 +4,8 @@ import { emptyState, errorBox, loading } from "./js/components.js";
 import { $, $$, clear, field, h, icon, openDialog, toast } from "./js/dom.js";
 import { buildHash, parseHash, sectionOf } from "./js/router.js";
 
-const PAGES = { home: "code", tree: "code", blob: "blob", commits: "commits", commit: "commit", changes: "changes", change: "change", tasks: "tasks", task: "task", search: "search", activity: "activity", releases: "releases", notifications: "notifications", settings: "settings", repos: "repos" };
-const TITLES = { home: "Code", tree: "Code", blob: "File", commits: "Commits", commit: "Commit", changes: "Changes", change: "Change", tasks: "Tasks", task: "Task", search: "Search", activity: "Activity", releases: "Releases", notifications: "Notifications", settings: "Settings", repos: "Repositories" };
+const PAGES = { home: "code", tree: "code", blob: "blob", commits: "commits", commit: "commit", changes: "changes", change: "change", tasks: "tasks", task: "task", search: "search", activity: "activity", releases: "releases", notifications: "notifications", settings: "settings", repos: "repos", runs: "runs", run: "run", package: "package", packages: "packages" };
+const TITLES = { home: "Code", tree: "Code", blob: "File", commits: "Commits", commit: "Commit", changes: "Changes", change: "Change", tasks: "Tasks", task: "Task", search: "Search", activity: "Activity", releases: "Releases", notifications: "Notifications", settings: "Settings", repos: "Repositories", runs: "Runs", run: "Run", packages: "Packages", package: "Package" };
 
 const main = $("#main");
 let ctrl = null;

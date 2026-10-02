@@ -15,7 +15,7 @@ const chromePath = readdirSync("/opt/pw-browsers").filter((d) => /^chromium-\d+$
 const browser = await chromium.launch({ executablePath: chromePath, args: ["--no-sandbox", "--hide-scrollbars"] });
 const mock = await startMock({});
 const authMock = await startMock({ token: "s3cret" });
-const partial = await startMock({ missing: ["tasks", "notifications", "tags", "releases", "repos", "tree", "blob", "history", "commit", "blame", "search", "stats", "readme", "provenance"] });
+const partial = await startMock({ missing: ["tasks", "notifications", "tags", "releases", "repos", "tree", "blob", "history", "commit", "blame", "search", "stats", "readme", "provenance", "runs", "workflows", "packages", "teams", "secrets"] });
 
 const SIZES = { desktop: { width: 1280, height: 800 }, mobile: { width: 390, height: 844 } } as const;
 interface Shot { name: string; hash: string; base?: "main" | "auth" | "partial"; full?: boolean; light?: boolean; token?: string; run?: (p: Page) => Promise<void>; sizes?: (keyof typeof SIZES)[]; wait?: string }
@@ -58,16 +58,33 @@ const shots: Shot[] = [
   { name: "45-notifications", hash: "#/notifications" },
   { name: "46-settings", hash: "#/settings" },
   { name: "47-repos", hash: "#/repos" },
+  { name: "70-runs", hash: "#/runs" },
+  { name: "71-runs-filtered", hash: "#/runs?workflow=deploy-preview&status=failed", full: false },
+  { name: "72-run-failed", hash: "#/run/w3" },
+  { name: "73-run-running", hash: "#/run/w5", full: false },
+  { name: "74-packages", hash: "#/packages" },
+  { name: "75-package", hash: "#/package/%40orbit%2Fclient" },
+  { name: "76-package-yanked", hash: "#/package/%40orbit%2Fclient?v=1.1.0" },
+  { name: "77-settings-forge", hash: "#/settings" },
+  { name: "78-owners-validation", hash: "#/settings", run: async (p) => { await p.getByRole("button", { name: "Add rule" }).click(); await p.locator("#own-p-3").fill("src/api/"); await p.getByRole("button", { name: "Save owners" }).click(); await p.waitForSelector(".form-error:not(:empty)"); }, full: false },
+  { name: "79-team-dialog", hash: "#/settings", run: async (p) => { await p.getByRole("button", { name: "New team" }).click(); }, full: false },
+  { name: "80-secret-dialog", hash: "#/settings", run: async (p) => { await p.getByRole("button", { name: "Add secret" }).click(); }, full: false },
+  { name: "81-change-owners-pending", hash: "#/change/claude-fixer-q4z", run: async (p) => { await p.locator(".owners-card").scrollIntoViewIfNeeded(); }, full: false },
+  { name: "82-run-manual", hash: "#/runs", run: async (p) => { await p.getByRole("button", { name: "Run" }).first().click(); await p.waitForURL(/#\/run\/w\d+/); await p.waitForSelector(".run-output, .card h2"); }, full: false },
   { name: "48-notfound", hash: "#/nope/zzz", full: false },
   { name: "50-signin", hash: "#/", base: "auth", full: false },
   { name: "51-signed-in", hash: "#/", base: "auth", token: "s3cret", full: false },
   { name: "52-degraded-home", hash: "#/", base: "partial" },
   { name: "53-degraded-tasks", hash: "#/tasks", base: "partial", full: false },
+  { name: "57-degraded-runs", hash: "#/runs", base: "partial", full: false },
+  { name: "58-degraded-packages", hash: "#/packages", base: "partial", full: false },
+  { name: "59-degraded-settings", hash: "#/settings", base: "partial" },
   { name: "54-degraded-releases", hash: "#/releases", base: "partial", full: false },
   { name: "55-degraded-blob", hash: "#/blob/README.md", base: "partial", full: false },
   { name: "56-degraded-commits", hash: "#/commits", base: "partial", full: false },
   { name: "60-light-home", hash: "#/", light: true, sizes: ["desktop"] },
   { name: "61-light-change", hash: "#/change/claude-fixer-q4z", light: true, sizes: ["desktop"], full: false },
+  { name: "63-light-package", hash: "#/package/%40orbit%2Fclient", light: true, sizes: ["desktop"], full: false },
   { name: "62-light-blob", hash: "#/blob/src/auth/session.ts", light: true, sizes: ["desktop"], full: false },
 ];
 

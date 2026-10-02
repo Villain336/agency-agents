@@ -34,11 +34,11 @@ const api = async (method: string, path: string, body?: unknown) => {
   return j;
 };
 
-function run(command: string, cwd: string, timeoutMs: number): Promise<{ passed: boolean; output: string }> {
+function run(command: string, cwd: string, timeoutMs: number, extraEnv: Record<string, string> = {}): Promise<{ passed: boolean; output: string }> {
   const bin = command.trim().split(/\s+/)[0];
   if (!allow.has(bin)) return Promise.resolve({ passed: false, output: `runner refused: "${bin}" is not in the allowlist (${[...allow].join(", ")})` });
   return new Promise((res) => {
-    const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: cwd, CI: "1", NODE_ENV: "test" }; // scrubbed: no tokens leak into agent code
+    const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: cwd, CI: "1", NODE_ENV: "test", ...extraEnv }; // scrubbed: no tokens leak into agent code
     const p = spawn("sh", ["-c", command], { cwd, env, detached: true });
     let out = "";
     const add = (b: Buffer) => (out += b.toString()).length > 200_000 && (out = out.slice(-100_000));
@@ -65,7 +65,7 @@ async function handle(job: any) {
       mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, c);
     }
-    const r = await run(job.command, dir, job.timeoutMs);
+    const r = await run(job.command, dir, job.timeoutMs, job.env ?? {});
     await api("POST", `runner/jobs/${job.id}/result`, { runner: name, passed: r.passed, output: r.output, durationMs: Date.now() - t0 });
     console.log(`[${name}] ${job.id} ${job.check}: ${r.passed ? "PASS" : "FAIL"} (${Date.now() - t0}ms)`);
   } finally {
